@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(head -30 /Users/xqcultima/nearandnowv1/user-app/lib/*.ts)",
+      "Bash(ls -la /Users/xqcultima/nearandnowv1/user-app/app/\\\\\\(tabs\\\\\\)/)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx tsc:*)",
+      "Bash(grep -E \"\\\\.\\(sql|md|txt\\)$\")",
+      "Bash(grep -r store_orders /Users/xqcultima --include=*.js --exclude-dir=node_modules)",
+      "Bash(grep -r \"apiFetch\\\\|/delivery-partner\" /Users/xqcultima/delivery_partner --include=*.ts --include=*.tsx)"
+    ]
+  }
+}

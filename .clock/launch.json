@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "delivery-app",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start"],
+      "port": 8081,
+      "autoPort": true
+    },
+    {
+      "name": "backend-server",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/xqcultima/server && node server.js"],
+      "port": 3001
+    }
+  ]
+}
