@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import MapView, { PROVIDER_GOOGLE, Marker } from "../../components/MapViewWrapper";
+import * as Haptics from "expo-haptics";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -110,9 +111,11 @@ export default function DeliveryScreen() {
   };
 
   const handlePickedUp = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setActionLoading(true);
     try {
       await apiFetch(`/delivery-partner/orders/${orderId}/picked-up`, { method: "POST" }, token);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await fetchOrder(token);
     } catch {
       Alert.alert("Error", "Failed to update order status.");
@@ -120,15 +123,29 @@ export default function DeliveryScreen() {
     setActionLoading(false);
   };
 
-  const handleDelivered = async () => {
-    setActionLoading(true);
-    try {
-      await apiFetch(`/delivery-partner/orders/${orderId}/delivered`, { method: "POST" }, token);
-      await fetchOrder(token);
-    } catch {
-      Alert.alert("Error", "Failed to update order status.");
-    }
-    setActionLoading(false);
+  const confirmAndDeliver = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      "Confirm Delivery",
+      "Are you sure the order has been delivered to the customer?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Yes, Delivered",
+          onPress: async () => {
+            setActionLoading(true);
+            try {
+              await apiFetch(`/delivery-partner/orders/${orderId}/delivered`, { method: "POST" }, token);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              await fetchOrder(token);
+            } catch {
+              Alert.alert("Error", "Failed to update order status.");
+            }
+            setActionLoading(false);
+          },
+        },
+      ]
+    );
   };
 
   const openNavigation = (lat: number, lng: number) => {
@@ -181,7 +198,6 @@ export default function DeliveryScreen() {
         />
       </MapView>
 
-      {/* Top bar */}
       <SafeAreaView edges={["top"]} style={styles.topBarRow}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
@@ -195,9 +211,7 @@ export default function DeliveryScreen() {
         </View>
       </SafeAreaView>
 
-      {/* Bottom card */}
       <Animated.View style={[styles.bottomCard, { transform: [{ translateY: cardAnim }], opacity: cardOpacity }]}>
-        {/* Progress */}
         <View style={styles.progressRow}>
           <View style={[styles.progressDot, (isPickup || isDelivering || isCompleted) && styles.progressDotActive]} />
           <View style={[styles.progressLine, (isDelivering || isCompleted) && styles.progressLineActive]} />
@@ -269,7 +283,7 @@ export default function DeliveryScreen() {
                 <MaterialCommunityIcons name="navigation-variant" size={18} color={Colors.accent} />
                 <Text style={styles.navText}>Navigate</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryButton} onPress={handleDelivered} disabled={actionLoading}>
+              <TouchableOpacity style={styles.primaryButton} onPress={confirmAndDeliver} disabled={actionLoading}>
                 {actionLoading ? <ActivityIndicator color={Colors.accentText} /> : (
                   <View style={styles.primaryInner}>
                     <MaterialCommunityIcons name="check-circle" size={18} color={Colors.accentText} />
@@ -288,7 +302,11 @@ export default function DeliveryScreen() {
             </View>
             <Text style={styles.completedText}>Order Delivered!</Text>
             <Text style={styles.completedAmount}>{"\u20B9"}{order.total_amount}</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace("/(tabs)/home")}>
+            <View style={styles.earningBadge}>
+              <MaterialCommunityIcons name="wallet-plus" size={16} color={Colors.success} />
+              <Text style={styles.earningBadgeText}>+{"\u20B9"}{(Number(order.total_amount) * 0.15).toFixed(0)} earned</Text>
+            </View>
+            <TouchableOpacity style={[styles.primaryButton, { marginTop: Spacing.sm }]} onPress={() => router.replace("/(tabs)/home")}>
               <View style={styles.primaryInner}>
                 <MaterialCommunityIcons name="home" size={18} color={Colors.accentText} />
                 <Text style={styles.primaryButtonText}>Back to Home</Text>
@@ -340,5 +358,17 @@ const styles = StyleSheet.create({
   completedContainer: { alignItems: "center", gap: Spacing.sm, paddingVertical: Spacing.lg },
   completedIconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.successLight, alignItems: "center", justifyContent: "center" },
   completedText: { color: Colors.text, fontSize: 24, fontWeight: "800" },
-  completedAmount: { color: Colors.textSecondary, fontSize: 18, marginBottom: Spacing.md },
+  completedAmount: { color: Colors.textSecondary, fontSize: 18 },
+  earningBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.successLight,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
+  },
+  earningBadgeText: { color: Colors.success, fontSize: 16, fontWeight: "700" },
 });

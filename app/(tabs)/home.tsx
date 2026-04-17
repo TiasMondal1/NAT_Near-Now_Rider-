@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
+import * as Haptics from "expo-haptics";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -47,7 +48,6 @@ export default function HomeScreen() {
   const cardAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  // Pulse animation for online status dot
   useEffect(() => {
     if (isOnline) {
       const pulse = Animated.loop(
@@ -61,7 +61,6 @@ export default function HomeScreen() {
     }
   }, [isOnline]);
 
-  // Spring animation for new order card
   useEffect(() => {
     if (pendingOrder) {
       cardAnim.setValue(0);
@@ -69,12 +68,10 @@ export default function HomeScreen() {
     }
   }, [pendingOrder?.id]);
 
-  // Fade-in on mount
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
 
-  // Init: get session, request location, fetch profile
   useEffect(() => {
     (async () => {
       const session = await getSession();
@@ -103,7 +100,6 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Location tracking when online
   useEffect(() => {
     if (!isOnline || !token) {
       locationSub.current?.remove();
@@ -128,7 +124,6 @@ export default function HomeScreen() {
     return () => { locationSub.current?.remove(); locationSub.current = null; };
   }, [isOnline, token]);
 
-  // Fetch active orders
   const fetchOrders = useCallback(async () => {
     if (!token) return;
     try {
@@ -144,7 +139,6 @@ export default function HomeScreen() {
     } catch {}
   }, [token]);
 
-  // Fetch completed orders for stats
   const fetchCompleted = useCallback(async () => {
     if (!token) return;
     try {
@@ -155,7 +149,6 @@ export default function HomeScreen() {
     } catch {}
   }, [token]);
 
-  // Poll active orders when online
   useEffect(() => {
     if (!isOnline || !token) {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -175,6 +168,7 @@ export default function HomeScreen() {
   };
 
   const handleToggle = async (value: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
     try {
       await apiFetch("/delivery-partner/status", { method: "PATCH", body: { isOnline: value } }, token);
@@ -186,6 +180,7 @@ export default function HomeScreen() {
   };
 
   const handleAccept = async (orderId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     try {
       await apiFetch(`/delivery-partner/orders/${orderId}/accept`, { method: "POST" }, token);
       fetchOrders();
@@ -193,6 +188,7 @@ export default function HomeScreen() {
   };
 
   const handleReject = async (orderId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     try {
       await apiFetch(`/delivery-partner/orders/${orderId}/reject`, { method: "POST" }, token);
       setPendingOrder(null);
@@ -200,7 +196,6 @@ export default function HomeScreen() {
     } catch { Alert.alert("Error", "Failed to reject order."); }
   };
 
-  // Computed
   const activeDelivery = activeOrders.find(
     (o) => o.status === "rider_assigned" || o.status === "en_route_delivery"
   );
@@ -229,13 +224,17 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-        {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>
-              Hey, {userName ? userName.split(" ")[0] : "Partner"} {"\uD83D\uDC4B"}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.greetingSub}>
+              {new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}
             </Text>
-            <View style={styles.statusRow}>
+            <Text style={styles.greeting}>
+              {userName ? userName.split(" ")[0] : "Partner"}
+            </Text>
+          </View>
+          <View style={styles.headerRight}>
+            <View style={styles.statusChip}>
               <Animated.View
                 style={[
                   styles.statusDot,
@@ -249,13 +248,13 @@ export default function HomeScreen() {
                 {isOnline ? "Online" : "Offline"}
               </Text>
             </View>
+            <Switch
+              value={isOnline}
+              onValueChange={handleToggle}
+              trackColor={{ false: Colors.border, true: Colors.accentLight }}
+              thumbColor={isOnline ? Colors.accent : Colors.textMuted}
+            />
           </View>
-          <Switch
-            value={isOnline}
-            onValueChange={handleToggle}
-            trackColor={{ false: Colors.border, true: Colors.accentLight }}
-            thumbColor={isOnline ? Colors.accent : Colors.textMuted}
-          />
         </View>
 
         <ScrollView
@@ -266,7 +265,6 @@ export default function HomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.accent} />
           }
         >
-          {/* Status Banner */}
           <View style={[styles.statusBanner, isOnline ? styles.bannerOnline : styles.bannerOffline]}>
             <View style={[styles.bannerIcon, isOnline ? styles.bannerIconOnline : styles.bannerIconOffline]}>
               <MaterialCommunityIcons
@@ -294,7 +292,6 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Today's Stats */}
           <View style={styles.statsRow}>
             <View style={styles.statCard}>
               <View style={[styles.statIconWrap, { backgroundColor: Colors.accentLight }]}>
@@ -312,7 +309,6 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* New Order Card */}
           {pendingOrder && isOnline && (
             <Animated.View
               style={[
@@ -370,7 +366,6 @@ export default function HomeScreen() {
             </Animated.View>
           )}
 
-          {/* Active Delivery Card */}
           {activeDelivery && isOnline && !pendingOrder && (
             <TouchableOpacity
               style={styles.activeCard}
@@ -429,7 +424,6 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
-          {/* Empty state when online but no active orders */}
           {isOnline && !activeDelivery && !pendingOrder && (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
@@ -440,7 +434,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Recent Deliveries */}
           {recentOrders.length > 0 && (
             <View style={styles.recentSection}>
               <View style={styles.recentHeader}>
@@ -467,7 +460,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Bottom spacing */}
           <View style={{ height: 20 }} />
         </ScrollView>
       </Animated.View>
@@ -480,26 +472,36 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
   content: { flex: 1 },
 
-  // Header
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
+    paddingBottom: Spacing.md + 4,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  greeting: { color: Colors.text, fontSize: 20, fontWeight: "800" },
-  statusRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
+  greetingSub: { color: Colors.textMuted, fontSize: 13, fontWeight: "500", marginBottom: 2 },
+  greeting: { color: Colors.text, fontSize: 22, fontWeight: "800" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
+  statusChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
-  statusLabel: { fontSize: 13, fontWeight: "600" },
+  statusLabel: { fontSize: 12, fontWeight: "600" },
 
-  // Scroll
   scroll: { flex: 1 },
   scrollContent: { padding: Spacing.lg, gap: Spacing.md },
 
-  // Status Banner
   statusBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -541,7 +543,6 @@ const styles = StyleSheet.create({
   },
   goOnlineBtnText: { color: Colors.accentText, fontSize: 13, fontWeight: "700" },
 
-  // Stats
   statsRow: { flexDirection: "row", gap: Spacing.sm },
   statCard: {
     flex: 1,
@@ -568,7 +569,6 @@ const styles = StyleSheet.create({
   statValue: { color: Colors.text, fontSize: 24, fontWeight: "800" },
   statLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: "600", marginTop: 4 },
 
-  // New Order Card
   newOrderCard: {
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.xl,
@@ -657,7 +657,6 @@ const styles = StyleSheet.create({
   },
   acceptBtnText: { color: Colors.accentText, fontSize: 15, fontWeight: "700" },
 
-  // Active Delivery Card
   activeCard: {
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.xl,
@@ -707,7 +706,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // Empty state
   emptyState: { alignItems: "center", paddingVertical: Spacing.xl },
   emptyIconWrap: {
     width: 80,
@@ -721,7 +719,6 @@ const styles = StyleSheet.create({
   emptyTitle: { color: Colors.text, fontSize: 17, fontWeight: "700" },
   emptySub: { color: Colors.textMuted, fontSize: 14, marginTop: 6, textAlign: "center" },
 
-  // Recent Deliveries
   recentSection: { marginTop: Spacing.sm },
   recentHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: Spacing.md },
   recentTitle: { color: Colors.text, fontSize: 18, fontWeight: "700" },

@@ -4,11 +4,13 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -24,11 +26,14 @@ type Order = {
   stores?: { name: string } | null;
 };
 
+type Period = "today" | "week" | "all";
+
 export default function EarningsScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [token, setToken] = useState("");
+  const [period, setPeriod] = useState<Period>("today");
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
@@ -65,18 +70,35 @@ export default function EarningsScreen() {
     if (token) fetchCompleted();
   }, [token, fetchCompleted]);
 
-  const todayStr = new Date().toDateString();
+  useFocusEffect(
+    useCallback(() => {
+      if (token) fetchCompleted();
+    }, [token, fetchCompleted])
+  );
+
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
   const todayOrders = orders.filter(
     (o) => new Date(o.placed_at).toDateString() === todayStr
   );
+  const weekOrders = orders.filter(
+    (o) => new Date(o.placed_at) >= weekAgo
+  );
+
   const todayEarnings = todayOrders.reduce(
-    (sum, o) => sum + (Number(o.total_amount) * 0.15),
-    0
+    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
+  );
+  const weekEarnings = weekOrders.reduce(
+    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
   );
   const totalEarnings = orders.reduce(
-    (sum, o) => sum + (Number(o.total_amount) * 0.15),
-    0
+    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
   );
+
+  const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
+  const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -90,9 +112,9 @@ export default function EarningsScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
+      <SafeAreaView style={styles.centered}>
         <ActivityIndicator color={Colors.accent} size="large" />
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -101,34 +123,69 @@ export default function EarningsScreen() {
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <Text style={styles.header}>Earnings</Text>
 
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, styles.todayCard]}>
-            <View style={styles.statIconWrap}>
-              <MaterialCommunityIcons name="calendar-today" size={20} color={Colors.accent} />
+        <View style={styles.periodRow}>
+          {(["today", "week", "all"] as const).map((p) => (
+            <TouchableOpacity
+              key={p}
+              style={[styles.periodTab, period === p && styles.periodTabActive]}
+              onPress={() => setPeriod(p)}
+            >
+              <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+                {p === "today" ? "Today" : p === "week" ? "This Week" : "All Time"}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryTop}>
+            <View style={styles.summaryIconWrap}>
+              <MaterialCommunityIcons name="wallet" size={24} color={Colors.accent} />
             </View>
-            <Text style={styles.statLabel}>TODAY</Text>
-            <Text style={styles.statValue}>
-              {"\u20B9"}{todayEarnings.toFixed(0)}
-            </Text>
-            <Text style={styles.statSub}>{todayOrders.length} deliveries</Text>
+            <View>
+              <Text style={styles.summaryLabel}>
+                {period === "today" ? "Today's Earnings" : period === "week" ? "This Week" : "Total Earnings"}
+              </Text>
+              <Text style={styles.summaryValue}>{"\u20B9"}{filteredEarnings.toFixed(0)}</Text>
+            </View>
           </View>
-          <View style={styles.statCard}>
-            <View style={styles.statIconWrap}>
-              <MaterialCommunityIcons name="wallet-outline" size={20} color={Colors.accent} />
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryBottom}>
+            <View style={styles.summaryMeta}>
+              <MaterialCommunityIcons name="package-variant-closed" size={16} color={Colors.textMuted} />
+              <Text style={styles.summaryMetaText}>{filteredOrders.length} deliveries</Text>
             </View>
-            <Text style={styles.statLabel}>TOTAL</Text>
-            <Text style={styles.statValue}>
-              {"\u20B9"}{totalEarnings.toFixed(0)}
-            </Text>
-            <Text style={styles.statSub}>{orders.length} deliveries</Text>
+            {filteredOrders.length > 0 && (
+              <View style={styles.summaryMeta}>
+                <MaterialCommunityIcons name="trending-up" size={16} color={Colors.success} />
+                <Text style={[styles.summaryMetaText, { color: Colors.success }]}>
+                  Avg {"\u20B9"}{(filteredEarnings / filteredOrders.length).toFixed(0)}/delivery
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Completed Deliveries</Text>
+        <View style={styles.quickStatsRow}>
+          <View style={[styles.quickStat, { backgroundColor: Colors.accentLight }]}>
+            <Text style={[styles.quickStatValue, { color: Colors.accent }]}>{todayOrders.length}</Text>
+            <Text style={styles.quickStatLabel}>Today</Text>
+          </View>
+          <View style={[styles.quickStat, { backgroundColor: Colors.warningLight }]}>
+            <Text style={[styles.quickStatValue, { color: Colors.warning }]}>{weekOrders.length}</Text>
+            <Text style={styles.quickStatLabel}>This Week</Text>
+          </View>
+          <View style={[styles.quickStat, { backgroundColor: Colors.successLight }]}>
+            <Text style={[styles.quickStatValue, { color: Colors.success }]}>{orders.length}</Text>
+            <Text style={styles.quickStatLabel}>Total</Text>
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Delivery History</Text>
       </Animated.View>
 
       <FlatList
-        data={orders}
+        data={filteredOrders}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         refreshControl={
@@ -160,12 +217,15 @@ export default function EarningsScreen() {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.date}>{formatDate(item.placed_at)}</Text>
+              <View style={styles.cardDateRow}>
+                <MaterialCommunityIcons name="clock-outline" size={12} color={Colors.textMuted} />
+                <Text style={styles.date}>{formatDate(item.placed_at)}</Text>
+              </View>
             </View>
           </Animated.View>
         )}
         ListEmptyComponent={
-          <View style={styles.centered}>
+          <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
               <MaterialCommunityIcons
                 name="cash-remove"
@@ -173,7 +233,9 @@ export default function EarningsScreen() {
                 color={Colors.accent}
               />
             </View>
-            <Text style={styles.emptyText}>No earnings yet</Text>
+            <Text style={styles.emptyText}>
+              {period === "today" ? "No earnings today" : period === "week" ? "No earnings this week" : "No earnings yet"}
+            </Text>
             <Text style={styles.emptySub}>
               Complete deliveries to start earning
             </Text>
@@ -193,7 +255,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 80,
     backgroundColor: Colors.bg,
   },
   header: {
@@ -202,57 +263,125 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.md,
+    paddingBottom: Spacing.sm,
   },
-  statsRow: {
+
+  periodRow: {
+    flexDirection: "row",
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  periodTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    alignItems: "center",
+  },
+  periodTabActive: {
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  periodTabText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  periodTabTextActive: {
+    color: Colors.accentText,
+  },
+
+  summaryCard: {
+    marginHorizontal: Spacing.lg,
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.accent + "25",
+    marginBottom: Spacing.md,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  summaryTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  summaryIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.accentLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  summaryLabel: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  summaryValue: {
+    color: Colors.text,
+    fontSize: 32,
+    fontWeight: "800",
+  },
+  summaryDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.md,
+  },
+  summaryBottom: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  summaryMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  summaryMetaText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontWeight: "500",
+  },
+
+  quickStatsRow: {
     flexDirection: "row",
     paddingHorizontal: Spacing.lg,
     gap: Spacing.sm,
     marginBottom: Spacing.lg,
   },
-  statCard: {
+  quickStat: {
     flex: 1,
-    backgroundColor: Colors.card,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  todayCard: {
-    borderColor: Colors.accentLight,
-    backgroundColor: Colors.accentLight,
-  },
-  statIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.bg,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.md,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: Spacing.sm,
   },
-  statLabel: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.5,
-    marginBottom: Spacing.xs,
-  },
-  statValue: {
-    color: Colors.text,
-    fontSize: 28,
+  quickStatValue: {
+    fontSize: 22,
     fontWeight: "800",
   },
-  statSub: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    marginTop: 4,
+  quickStatLabel: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 2,
   },
+
   sectionTitle: {
     color: Colors.textSecondary,
     fontSize: 13,
@@ -283,7 +412,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   cardIconWrap: {
     width: 34,
@@ -314,10 +443,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
   },
+  cardDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingLeft: 46,
+  },
   date: {
     color: Colors.textMuted,
     fontSize: 12,
-    paddingLeft: 46,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 60,
   },
   emptyIconWrap: {
     width: 80,
