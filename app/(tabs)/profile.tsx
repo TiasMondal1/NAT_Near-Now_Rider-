@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -36,6 +36,8 @@ export default function ProfileScreen() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [token, setToken] = useState("");
+  const [totalDeliveries, setTotalDeliveries] = useState(0);
+  const [totalEarnings, setTotalEarnings] = useState(0);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -51,29 +53,51 @@ export default function ProfileScreen() {
     ]).start();
   }, []);
 
+  const fetchProfile = useCallback(async (t: string) => {
+    try {
+      const res = await apiFetch<{ success: boolean; profile: Profile }>(
+        "/delivery-partner/profile",
+        {},
+        t
+      );
+      if (res.success) {
+        setProfile(res.profile);
+        setName(res.profile.name);
+        setEmail(res.profile.email || "");
+        setAddress(res.profile.address || "");
+      }
+    } catch {}
+  }, []);
+
+  const fetchStats = useCallback(async (t: string) => {
+    try {
+      const res = await apiFetch<{ success: boolean; orders: { total_amount: number }[] }>(
+        "/delivery-partner/orders?status=completed",
+        {},
+        t
+      );
+      if (res.success) {
+        setTotalDeliveries(res.orders.length);
+        setTotalEarnings(res.orders.reduce((sum, o) => sum + Number(o.total_amount) * 0.15, 0));
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
     (async () => {
       const session = await getSession();
       if (!session?.token) return;
       setToken(session.token);
-
-      try {
-        const res = await apiFetch<{ success: boolean; profile: Profile }>(
-          "/delivery-partner/profile",
-          {},
-          session.token
-        );
-        if (res.success) {
-          setProfile(res.profile);
-          setName(res.profile.name);
-          setEmail(res.profile.email || "");
-          setAddress(res.profile.address || "");
-        }
-      } catch {}
-
+      await Promise.all([fetchProfile(session.token), fetchStats(session.token)]);
       setLoading(false);
     })();
-  }, []);
+  }, [fetchProfile, fetchStats]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (token) fetchStats(token);
+    }, [token, fetchStats])
+  );
 
   const handleSave = async () => {
     setSaving(true);
@@ -116,9 +140,9 @@ export default function ProfileScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
+      <SafeAreaView style={styles.centered}>
         <ActivityIndicator color={Colors.accent} size="large" />
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -145,10 +169,12 @@ export default function ProfileScreen() {
 
       <ScrollView contentContainerStyle={styles.scroll}>
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          {/* Avatar */}
           <View style={styles.avatarSection}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initial}</Text>
+            <View style={styles.avatarOuter}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initial}</Text>
+              </View>
+              <View style={[styles.onlineDot, { backgroundColor: profile?.is_online ? Colors.online : Colors.offline }]} />
             </View>
             <Text style={styles.displayName}>{profile?.name}</Text>
             <View style={styles.roleBadge}>
@@ -157,7 +183,32 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Info cards */}
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <View style={[styles.statIconWrap, { backgroundColor: Colors.accentLight }]}>
+                <MaterialCommunityIcons name="package-variant-closed" size={18} color={Colors.accent} />
+              </View>
+              <Text style={styles.statValue}>{totalDeliveries}</Text>
+              <Text style={styles.statLabel}>Deliveries</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <View style={[styles.statIconWrap, { backgroundColor: Colors.successLight }]}>
+                <MaterialCommunityIcons name="currency-inr" size={18} color={Colors.success} />
+              </View>
+              <Text style={styles.statValue}>{"\u20B9"}{totalEarnings.toFixed(0)}</Text>
+              <Text style={styles.statLabel}>Earned</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <View style={[styles.statIconWrap, { backgroundColor: Colors.warningLight }]}>
+                <MaterialCommunityIcons name="star" size={18} color={Colors.warning} />
+              </View>
+              <Text style={styles.statValue}>4.8</Text>
+              <Text style={styles.statLabel}>Rating</Text>
+            </View>
+          </View>
+
           <View style={styles.infoCard}>
             <FieldRow label="Full Name" editing={editing} value={name} displayValue={profile?.name || ""} onChangeText={setName} icon="account" />
             <View style={styles.fieldDivider} />
@@ -168,17 +219,22 @@ export default function ProfileScreen() {
             <FieldRow label="Address" editing={editing} value={address} displayValue={profile?.address || "Not provided"} onChangeText={setAddress} multiline placeholder="Your address" icon="map-marker" />
           </View>
 
-          {/* Verification card */}
           <View style={styles.infoCard}>
             <View style={styles.fieldRowView}>
               <View style={styles.fieldLabelRow}>
                 <MaterialCommunityIcons name="shield-check" size={14} color={Colors.accent} />
                 <Text style={styles.fieldLabel}>Verification</Text>
               </View>
-              <Text style={styles.fieldValue}>
-                {profile?.verification_document || "---"}{" "}
-                {profile?.verification_number ? ` · ${profile.verification_number}` : ""}
-              </Text>
+              <View style={styles.verificationRow}>
+                <Text style={styles.fieldValue}>
+                  {profile?.verification_document || "---"}
+                </Text>
+                {profile?.verification_number && (
+                  <View style={styles.verificationBadge}>
+                    <Text style={styles.verificationBadgeText}>{profile.verification_number}</Text>
+                  </View>
+                )}
+              </View>
             </View>
             <View style={styles.fieldDivider} />
             <View style={styles.fieldRowView}>
@@ -215,6 +271,20 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           )}
 
+          <View style={styles.quickActions}>
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/earnings")}>
+              <MaterialCommunityIcons name="chart-line" size={20} color={Colors.accent} />
+              <Text style={styles.quickActionText}>View Earnings</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+            <View style={styles.fieldDivider} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/orders")}>
+              <MaterialCommunityIcons name="clipboard-list" size={20} color={Colors.accent} />
+              <Text style={styles.quickActionText}>Order History</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <MaterialCommunityIcons name="logout" size={18} color={Colors.danger} />
             <Text style={styles.logoutText}>Logout</Text>
@@ -235,10 +305,15 @@ function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly,
       <View style={styles.fieldLabelRow}>
         {icon && <MaterialCommunityIcons name={icon as any} size={14} color={Colors.accent} />}
         <Text style={styles.fieldLabel}>{label}</Text>
+        {readOnly && (
+          <View style={styles.readOnlyBadge}>
+            <MaterialCommunityIcons name="lock" size={10} color={Colors.textMuted} />
+          </View>
+        )}
       </View>
       {editing && !readOnly ? (
         <TextInput
-          style={[styles.fieldInput, multiline && { height: 60, textAlignVertical: "top" }]}
+          style={[styles.fieldInput, multiline && { height: 60, textAlignVertical: "top", paddingTop: 10 }]}
           value={value}
           onChangeText={onChangeText}
           keyboardType={keyboardType}
@@ -263,24 +338,70 @@ const styles = StyleSheet.create({
   editBtnText: { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   cancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: "600" },
   scroll: { padding: Spacing.lg, paddingBottom: 60 },
-  avatarSection: { alignItems: "center", marginBottom: Spacing.xl },
-  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.accentLight, borderWidth: 2, borderColor: Colors.accent, alignItems: "center", justifyContent: "center", marginBottom: Spacing.md },
-  avatarText: { color: Colors.accent, fontSize: 32, fontWeight: "800" },
-  displayName: { color: Colors.text, fontSize: 20, fontWeight: "700" },
+
+  avatarSection: { alignItems: "center", marginBottom: Spacing.lg },
+  avatarOuter: { position: "relative", marginBottom: Spacing.md },
+  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.accentLight, borderWidth: 3, borderColor: Colors.accent, alignItems: "center", justifyContent: "center" },
+  avatarText: { color: Colors.accent, fontSize: 34, fontWeight: "800" },
+  onlineDot: { position: "absolute", bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, borderWidth: 3, borderColor: Colors.bg },
+  displayName: { color: Colors.text, fontSize: 22, fontWeight: "700" },
   roleBadge: { flexDirection: "row", alignItems: "center", marginTop: 6, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 4, backgroundColor: Colors.accentLight },
   roleText: { color: Colors.accent, fontSize: 12, fontWeight: "600" },
+
+  statsRow: {
+    flexDirection: "row",
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  statItem: { flex: 1, alignItems: "center" },
+  statIconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 6 },
+  statValue: { color: Colors.text, fontSize: 18, fontWeight: "800" },
+  statLabel: { color: Colors.textMuted, fontSize: 11, fontWeight: "600", marginTop: 2 },
+  statDivider: { width: 1, backgroundColor: Colors.border, marginVertical: 4 },
+
   infoCard: { backgroundColor: Colors.card, borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md, shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   fieldRowView: { paddingVertical: Spacing.sm },
   fieldLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   fieldLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.5, textTransform: "uppercase" },
+  readOnlyBadge: { marginLeft: 4 },
   fieldValue: { color: Colors.text, fontSize: 16 },
   fieldValueMuted: { color: Colors.textSecondary, fontSize: 16 },
-  fieldInput: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.md, height: 42, color: Colors.text, fontSize: 15, borderWidth: 1, borderColor: Colors.border },
+  fieldInput: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.md, height: 42, color: Colors.text, fontSize: 15, borderWidth: 1, borderColor: Colors.accent + "40" },
   fieldDivider: { height: 1, backgroundColor: Colors.border },
-  saveButton: { backgroundColor: Colors.accent, borderRadius: BorderRadius.md, height: 52, alignItems: "center", justifyContent: "center", marginTop: Spacing.sm, shadowColor: Colors.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 4 },
+
+  verificationRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
+  verificationBadge: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 2 },
+  verificationBadgeText: { color: Colors.textSecondary, fontSize: 14, fontWeight: "600", letterSpacing: 0.5 },
+
+  quickActions: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+    overflow: "hidden",
+  },
+  quickActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    padding: Spacing.lg,
+  },
+  quickActionText: { flex: 1, color: Colors.text, fontSize: 15, fontWeight: "600" },
+
+  saveButton: { backgroundColor: Colors.accent, borderRadius: BorderRadius.md, height: 52, alignItems: "center", justifyContent: "center", marginTop: Spacing.sm, marginBottom: Spacing.md, shadowColor: Colors.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 4 },
   saveInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   saveText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
-  logoutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, marginTop: Spacing.xl, paddingVertical: Spacing.md, borderWidth: 1, borderColor: Colors.dangerLight, borderRadius: BorderRadius.md, backgroundColor: Colors.dangerLight },
+  logoutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, paddingVertical: Spacing.md, borderWidth: 1, borderColor: Colors.dangerLight, borderRadius: BorderRadius.md, backgroundColor: Colors.dangerLight },
   logoutText: { color: Colors.danger, fontSize: 15, fontWeight: "600" },
   version: { color: Colors.textMuted, fontSize: 12, textAlign: "center", marginTop: Spacing.lg },
 });

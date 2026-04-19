@@ -1,5 +1,6 @@
 import { Tabs } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { View, Platform } from "react-native";
 import { Colors } from "../../constants/theme";
 
 export default function TabLayout() {
@@ -9,13 +10,15 @@ export default function TabLayout() {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: Colors.bg,
-          borderTopWidth: 1,
-          borderTopColor: Colors.border,
-          height: 84,
-          paddingBottom: 24,
-          paddingTop: 8,
+          borderTopWidth: 0,
+          height: Platform.OS === "ios" ? 88 : 68,
+          paddingBottom: Platform.OS === "ios" ? 28 : 10,
+          paddingTop: 10,
           elevation: 0,
-          shadowOpacity: 0,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: -3 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
         },
         tabBarActiveTintColor: Colors.accent,
         tabBarInactiveTintColor: Colors.textMuted,
@@ -24,14 +27,23 @@ export default function TabLayout() {
           fontWeight: "600",
           letterSpacing: 0.3,
         },
+        tabBarItemStyle: {
+          gap: 2,
+        },
       }}
     >
       <Tabs.Screen
         name="home"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="map-marker-radius" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
+              <MaterialCommunityIcons
+                name={focused ? "map-marker-radius" : "map-marker-radius-outline"}
+                size={24}
+                color={color}
+              />
+            </View>
           ),
         }}
       />
@@ -39,8 +51,14 @@ export default function TabLayout() {
         name="orders"
         options={{
           title: "Orders",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="clipboard-list-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
+              <MaterialCommunityIcons
+                name={focused ? "clipboard-list" : "clipboard-list-outline"}
+                size={24}
+                color={color}
+              />
+            </View>
           ),
         }}
       />
@@ -48,8 +66,14 @@ export default function TabLayout() {
         name="earnings"
         options={{
           title: "Earnings",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="wallet-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
+              <MaterialCommunityIcons
+                name={focused ? "wallet" : "wallet-outline"}
+                size={24}
+                color={color}
+              />
+            </View>
           ),
         }}
       />
@@ -57,8 +81,14 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="account-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
+              <MaterialCommunityIcons
+                name={focused ? "account-circle" : "account-circle-outline"}
+                size={24}
+                color={color}
+              />
+            </View>
           ),
         }}
       />

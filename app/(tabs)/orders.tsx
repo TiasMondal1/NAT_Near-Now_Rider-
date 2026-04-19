@@ -10,7 +10,7 @@ import {
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -81,6 +81,12 @@ export default function OrdersScreen() {
   useEffect(() => {
     if (token) fetchOrders(true);
   }, [token, tab, fetchOrders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (token) fetchOrders(false);
+    }, [token, tab, fetchOrders])
+  );
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -175,7 +181,14 @@ export default function OrdersScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-        <Text style={styles.header}>Orders</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.header}>Orders</Text>
+          {orders.length > 0 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>{orders.length}</Text>
+            </View>
+          )}
+        </View>
 
         <View style={styles.tabs}>
           {(["active", "completed"] as const).map((t) => (
@@ -248,13 +261,32 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bg,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
+  },
   header: {
     color: Colors.text,
     fontSize: 28,
     fontWeight: "800",
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
+  },
+  countBadge: {
+    backgroundColor: Colors.accent,
+    borderRadius: BorderRadius.round,
+    minWidth: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  countBadgeText: {
+    color: Colors.accentText,
+    fontSize: 13,
+    fontWeight: "700",
   },
   tabs: {
     flexDirection: "row",
@@ -379,7 +411,9 @@ const styles = StyleSheet.create({
   cardArrow: {
     position: "absolute",
     right: Spacing.md,
-    top: "50%",
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
   },
   centered: {
     flex: 1,

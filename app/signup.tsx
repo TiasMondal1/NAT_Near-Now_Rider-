@@ -40,6 +40,8 @@ export default function SignupScreen() {
   }, []);
 
   const isValid = name.trim().length >= 2;
+  const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const isPasswordStrong = !password || password.length >= 6;
 
   const handleSignup = async () => {
     if (!isValid) return;
@@ -107,7 +109,7 @@ export default function SignupScreen() {
 
               <Text style={styles.label}>Email</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, email.trim() && !isEmailValid && styles.inputError]}
                 placeholder="email@example.com"
                 placeholderTextColor={Colors.textMuted}
                 keyboardType="email-address"
@@ -115,16 +117,22 @@ export default function SignupScreen() {
                 value={email}
                 onChangeText={setEmail}
               />
+              {email.trim() && !isEmailValid && (
+                <Text style={styles.errorHint}>Please enter a valid email address</Text>
+              )}
 
               <Text style={styles.label}>Password</Text>
               <TextInput
-                style={styles.input}
-                placeholder="Create a password"
+                style={[styles.input, password && !isPasswordStrong && styles.inputError]}
+                placeholder="Create a password (min 6 chars)"
                 placeholderTextColor={Colors.textMuted}
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
               />
+              {password && !isPasswordStrong && (
+                <Text style={styles.errorHint}>Password must be at least 6 characters</Text>
+              )}
 
               <Text style={styles.label}>Address</Text>
               <TextInput
@@ -165,9 +173,9 @@ export default function SignupScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.button, !isValid && styles.buttonDisabled]}
+              style={[styles.button, (!isValid || !isEmailValid || !isPasswordStrong) && styles.buttonDisabled]}
               onPress={handleSignup}
-              disabled={!isValid || loading}
+              disabled={!isValid || !isEmailValid || !isPasswordStrong || loading}
               activeOpacity={0.8}
             >
               {loading ? (
@@ -266,4 +274,6 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.4, shadowOpacity: 0 },
   buttonInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   buttonText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
+  inputError: { borderColor: Colors.danger, borderWidth: 1.5 },
+  errorHint: { color: Colors.danger, fontSize: 12, marginTop: 4, marginLeft: 2 },
 });
