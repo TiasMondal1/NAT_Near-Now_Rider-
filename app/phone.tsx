@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
-import { apiFetch } from "../constants/api";
+import { apiFetch, API_BASE } from "../constants/api";
 import { saveSession } from "../session";
 
 export default function PhoneScreen() {
@@ -43,6 +43,10 @@ export default function PhoneScreen() {
     if (!isValid) return;
     setLoading(true);
     const fullPhone = `+91${phone.replace(/\s/g, "")}`;
+
+    console.log("📱 Sending OTP to:", API_BASE + "/auth/phone/start");
+    console.log("📞 Phone:", fullPhone);
+
     try {
       const res = await apiFetch<{
         success: boolean; sessionId: string; exists: boolean; bypass?: boolean;
@@ -64,8 +68,25 @@ export default function PhoneScreen() {
         router.push({ pathname: "/otp", params: { phone: fullPhone, sessionId: res.sessionId } });
       }
     } catch (err: unknown) {
-      const error = err as { error?: string };
-      Alert.alert("Error", error?.error || "Failed to send OTP. Try again.");
+      const error = err as { error?: string; message?: string; status?: number };
+      console.error("❌ OTP Error:", err);
+
+      let errorMessage = "Failed to send OTP. Try again.";
+
+      if (error?.status === 404) {
+        errorMessage = "API endpoint not found. Check backend.";
+      } else if (error?.status === 500) {
+        errorMessage = "Server error. Backend may need Twilio config.";
+      } else if (error?.error) {
+        errorMessage = error.error;
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+
+      Alert.alert(
+        "Error Sending OTP",
+        `${errorMessage}\n\nAPI: ${API_BASE}\nPhone: ${fullPhone}`
+      );
     } finally {
       setLoading(false);
     }

@@ -1,4 +1,6 @@
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || "http://192.168.1.117:3001";
+import { API_CONFIG } from "./config";
+
+const API_BASE = API_CONFIG.BASE_URL;
 
 export { API_BASE };
 

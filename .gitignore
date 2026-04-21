@@ -1,2 +1,37 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Expo
+.expo/
+.expo-shared/
+dist/
+web-build/
+
+# Native
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.keystore
+
+# Debug
+*.log
+
+# OS
+.DS_Store
+*.pem
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
 .claude
-node_modules
+
+# Temporary files
+*.tmp
