@@ -49,17 +49,72 @@ export default function SignupScreen() {
   const isValid = name.trim().length >= 2;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const normalizedPhone = String(phone || "").trim();
+  const normalizedPhoneDigits = normalizedPhone.replace(/\D/g, "");
+
+  const byPhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
+
+  const upsertExistingPartnerProfile = async (partnerId: string) => {
+    await apiFetch(`/api/delivery/partners/${partnerId}`, {
+      method: "PUT",
+      body: {
+        name: name.trim() || "Delivery Partner",
+        email: email.trim() || undefined,
+        phone: normalizedPhone,
+        address: address.trim() || undefined,
+        vehicle_number: vehicleNumber.trim() || undefined,
+        verification_document: docType,
+        verification_number: docNumber.trim() || undefined,
+        status: "pending_verification",
+      },
+    });
+  };
 
   const handleSignup = async () => {
     if (!isValid) return;
     setLoading(true);
     try {
-      const res = await apiFetch<{
-        id?: string;
-        success?: boolean;
-        token?: string;
-        user: { id: string; name: string; role: string; isActivated: boolean; phone?: string };
-      }>("/api/delivery/partners", {
+      // 1) Pre-check: if app_user already exists for this phone, repair/create profile first.
+      let preList: DeliveryPartnerListItem[] = [];
+      try {
+        preList = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+      } catch {
+        preList = [];
+      }
+      const existing = preList.find((p) => {
+        const candidate = byPhone(p.phone || p.profile?.phone);
+        return candidate === normalizedPhoneDigits;
+      });
+
+      if (existing?.id) {
+        if (!existing.profile) {
+          await upsertExistingPartnerProfile(existing.id);
+        }
+
+        const refreshed = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+        const ready = refreshed.find((p) => {
+          const candidate = byPhone(p.phone || p.profile?.phone);
+          return candidate === normalizedPhoneDigits && !!p.profile;
+        });
+        if (ready?.profile) {
+          await saveSession({
+            token: `delivery-existing-${Date.now()}`,
+            user: {
+              id: ready.id || ready.profile.user_id,
+              name: ready.name || name.trim() || "Delivery Partner",
+              role: "delivery_partner",
+              isActivated: true,
+              phone: ready.phone || ready.profile.phone || normalizedPhone,
+              email: ready.email || email.trim() || undefined,
+            },
+          });
+          Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
+          router.replace("/(tabs)/home");
+          return;
+        }
+      }
+
+      // 2) Create new partner only if not found above.
+      await apiFetch("/api/delivery/partners", {
         method: "POST",
         body: {
           phone: normalizedPhone,
@@ -73,99 +128,35 @@ export default function SignupScreen() {
         },
       });
 
-      // New partner account is created in app_users with role delivery_partner.
-      // User then verifies OTP again to obtain auth token for this role.
-      if (res?.id || res?.success) {
-        // Confirm delivery_partners profile exists after create.
-        const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-        const created = partners.find((p) => {
-          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
-          const target = normalizedPhone.replace(/\D/g, "");
-          return candidate === target;
-        });
+      const postCreateList = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+      const created = postCreateList.find((p) => {
+        const candidate = byPhone(p.phone || p.profile?.phone);
+        return candidate === normalizedPhoneDigits && !!p.profile;
+      });
 
-        if (!created?.profile) {
-          Alert.alert(
-            "Signup incomplete",
-            "app_users created, but delivery_partners profile was not created. Please try again."
-          );
-          return;
-        }
-
-        const sessionToken = res.token || `delivery-signup-${Date.now()}`;
-        await saveSession({
-          token: sessionToken,
-          user: {
-            id: created.id || res.user?.id || res.id || normalizedPhone,
-            name: created.name || res.user?.name || name.trim(),
-            role: "delivery_partner",
-            isActivated: res.user?.isActivated ?? true,
-            phone: created.phone || created.profile.phone || res.user?.phone || normalizedPhone,
-            email: created.email || email.trim() || undefined,
-          },
-        });
-        Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
-        router.replace("/(tabs)/home");
-      } else {
-        Alert.alert("Signup failed", "Could not create delivery partner account.");
+      if (!created?.profile) {
+        Alert.alert(
+          "Signup incomplete",
+          "Could not confirm delivery_partners profile creation. Please try again."
+        );
+        return;
       }
+
+      await saveSession({
+        token: `delivery-signup-${Date.now()}`,
+        user: {
+          id: created.id || created.profile.user_id || normalizedPhone,
+          name: created.name || name.trim() || "Delivery Partner",
+          role: "delivery_partner",
+          isActivated: true,
+          phone: created.phone || created.profile.phone || normalizedPhone,
+          email: created.email || email.trim() || undefined,
+        },
+      });
+      Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
+      router.replace("/(tabs)/home");
     } catch (err: unknown) {
       const error = err as { error?: string; message?: string; status?: number };
-
-      // Backend currently returns a generic 500 message for create failures.
-      // If partner already exists for this phone, continue with OTP flow instead of blocking.
-      try {
-        const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-        const existing = partners.find((p) => {
-          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
-          const target = normalizedPhone.replace(/\D/g, "");
-          return candidate === target;
-        });
-
-        // If app_users exists but delivery_partners is missing, upsert the profile immediately.
-        if (existing && !existing.profile) {
-          await apiFetch(`/api/delivery/partners/${existing.id}`, {
-            method: "PUT",
-            body: {
-              name: name.trim() || existing.name || "Delivery Partner",
-              email: email.trim() || existing.email || undefined,
-              phone: normalizedPhone,
-              address: address.trim() || undefined,
-              vehicle_number: vehicleNumber.trim() || undefined,
-              verification_document: docType,
-              verification_number: docNumber.trim() || undefined,
-              status: "pending_verification",
-            },
-          });
-        }
-
-        const refreshedPartners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-        const ready = refreshedPartners.find((p) => {
-          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
-          const target = normalizedPhone.replace(/\D/g, "");
-          return candidate === target && !!p.profile;
-        });
-
-        if (ready?.profile) {
-          await saveSession({
-            token: `delivery-existing-${Date.now()}`,
-            user: {
-              id: ready.id || ready.profile.user_id,
-              name: ready.name || name.trim() || "Delivery Partner",
-              role: "delivery_partner",
-              isActivated: true,
-              phone: ready.phone || ready.profile.phone || normalizedPhone,
-              email: ready.email || email.trim() || undefined,
-            },
-          });
-          Alert.alert("Account ready", "Both app_users and delivery_partners are populated. Opening home.");
-          router.replace("/(tabs)/home");
-          return;
-        }
-      } catch {
-        // Ignore fallback lookup failure and show original error.
-      }
-
       const details = error?.error || error?.message || "Something went wrong.";
       Alert.alert(
         "Signup Failed",
