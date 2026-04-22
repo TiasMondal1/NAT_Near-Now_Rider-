@@ -15,13 +15,23 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
-import { apiFetch, API_BASE } from "../constants/api";
+import { apiFetch } from "../constants/api";
 import { saveSession } from "../session";
+
+type DeliveryPartnerListItem = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  profile?: { user_id: string; phone?: string | null } | null;
+};
 
 export default function PhoneScreen() {
   const router = useRouter();
   const [phone, setPhone] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [selectedFlow, setSelectedFlow] = useState<"existing" | "new" | null>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -38,57 +48,79 @@ export default function PhoneScreen() {
   }, []);
 
   const isValid = phone.replace(/\s/g, "").length === 10;
+  const fullPhone = `+91${phone.replace(/\s/g, "")}`;
+  const disabled = !isValid || checkingExisting || registering;
 
-  const handleContinue = async () => {
+  const normalizePhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
+
+  const findByPhone = (partners: DeliveryPartnerListItem[], targetPhone: string) => {
+    const target = normalizePhone(targetPhone);
+    return partners.find((p) => {
+      const appUserPhone = normalizePhone(p.phone);
+      const profilePhone = normalizePhone(p.profile?.phone);
+      return appUserPhone === target || profilePhone === target;
+    });
+  };
+
+  const handleExistingUser = async () => {
     if (!isValid) return;
-    setLoading(true);
-    const fullPhone = `+91${phone.replace(/\s/g, "")}`;
-
-    console.log("📱 Sending OTP to:", API_BASE + "/auth/phone/start");
-    console.log("📞 Phone:", fullPhone);
-
+    setCheckingExisting(true);
     try {
-      const res = await apiFetch<{
-        success: boolean; sessionId: string; exists: boolean; bypass?: boolean;
-      }>("/auth/phone/start", { method: "POST", body: { phone: fullPhone } });
+      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+      const match = findByPhone(partners, fullPhone);
 
-      if (res.success && res.bypass) {
-        const verifyRes = await apiFetch<{
-          success: boolean; mode: string; token?: string; phone?: string;
-          user?: { id: string; name: string; role: string; isActivated: boolean; phone?: string; email?: string };
-        }>("/auth/phone/verify", { method: "POST", body: { phone: fullPhone, sessionId: "bypass", otp: "000000" } });
-
-        if (verifyRes.mode === "login" && verifyRes.token && verifyRes.user) {
-          await saveSession({ token: verifyRes.token, user: verifyRes.user });
-          router.replace("/(tabs)/home");
-        } else if (verifyRes.mode === "signup") {
-          router.replace({ pathname: "/signup", params: { phone: verifyRes.phone || fullPhone } });
-        }
-      } else if (res.success) {
-        router.push({ pathname: "/otp", params: { phone: fullPhone, sessionId: res.sessionId } });
+      if (!match) {
+        Alert.alert(
+          "User not found",
+          "No delivery partner account found for this phone. Please use New User Registration."
+        );
+        return;
       }
+
+      // Existing flow: user must be present in app_users and delivery_partners.
+      if (!match.profile) {
+        router.push({ pathname: "/signup", params: { phone: fullPhone } });
+        return;
+      }
+
+      await saveSession({
+        token: `delivery-existing-${Date.now()}`,
+        user: {
+          id: match.id || match.profile.user_id,
+          name: match.name || "Delivery Partner",
+          role: "delivery_partner",
+          isActivated: true,
+          phone: match.phone || match.profile.phone || fullPhone,
+          email: match.email || undefined,
+        },
+      });
+      router.replace("/(tabs)/home");
     } catch (err: unknown) {
-      const error = err as { error?: string; message?: string; status?: number };
-      console.error("❌ OTP Error:", err);
-
-      let errorMessage = "Failed to send OTP. Try again.";
-
-      if (error?.status === 404) {
-        errorMessage = "API endpoint not found. Check backend.";
-      } else if (error?.status === 500) {
-        errorMessage = "Server error. Backend may need Twilio config.";
-      } else if (error?.error) {
-        errorMessage = error.error;
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
-
-      Alert.alert(
-        "Error Sending OTP",
-        `${errorMessage}\n\nAPI: ${API_BASE}\nPhone: ${fullPhone}`
-      );
+      const error = err as { message?: string };
+      Alert.alert("Error", error?.message || "Unable to validate existing user right now.");
     } finally {
-      setLoading(false);
+      setCheckingExisting(false);
+    }
+  };
+
+  const handleNewRegistration = async () => {
+    if (!isValid) return;
+    setRegistering(true);
+    try {
+      const res = await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
+        method: "POST",
+        body: { phone: fullPhone },
+      });
+      if (!res.success) {
+        Alert.alert("Error", "Unable to send OTP right now. Please try again.");
+        return;
+      }
+      router.push({ pathname: "/otp", params: { phone: fullPhone, flow: "new" } });
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      Alert.alert("Error", error?.message || "Unable to send OTP right now.");
+    } finally {
+      setRegistering(false);
     }
   };
 
@@ -104,44 +136,108 @@ export default function PhoneScreen() {
         </Animated.View>
 
         <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-          <Text style={styles.title}>Start delivering</Text>
-          <Text style={styles.subtitle}>Enter your mobile number to continue</Text>
+          {selectedFlow === null ? (
+            <>
+              <Text style={styles.title}>Welcome Rider</Text>
+              <Text style={styles.subtitle}>Choose how you want to continue.</Text>
 
-          <View style={styles.inputCard}>
-            <View style={styles.inputRow}>
-              <View style={styles.prefix}>
-                <Text style={styles.prefixText}>+91</Text>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => setSelectedFlow("existing")}
+                activeOpacity={0.8}
+              >
+                <View style={styles.buttonInner}>
+                  <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
+                  <Text style={styles.buttonText}>Existing User</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => setSelectedFlow("new")}
+                activeOpacity={0.8}
+              >
+                <View style={styles.buttonInner}>
+                  <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
+                  <Text style={styles.secondaryButtonText}>New User Registration</Text>
+                </View>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.title}>
+                {selectedFlow === "existing" ? "Existing User" : "New User Registration"}
+              </Text>
+              <Text style={styles.subtitle}>Enter your phone number to continue.</Text>
+
+              <View style={styles.inputCard}>
+                <View style={styles.inputRow}>
+                  <View style={styles.prefix}>
+                    <Text style={styles.prefixText}>+91</Text>
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Phone number"
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    value={phone}
+                    onChangeText={setPhone}
+                    autoFocus
+                  />
+                </View>
               </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Phone number"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="phone-pad"
-                maxLength={10}
-                value={phone}
-                onChangeText={setPhone}
-                autoFocus
-              />
-            </View>
-          </View>
 
-          <TouchableOpacity
-            style={[styles.button, !isValid && styles.buttonDisabled]}
-            onPress={handleContinue}
-            disabled={!isValid || loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <ActivityIndicator color={Colors.accentText} />
-            ) : (
-              <View style={styles.buttonInner}>
-                <Text style={styles.buttonText}>Continue</Text>
-                <MaterialCommunityIcons name="arrow-right" size={20} color={Colors.accentText} />
-              </View>
-            )}
-          </TouchableOpacity>
+              {selectedFlow === "existing" ? (
+                <TouchableOpacity
+                  style={[styles.button, disabled && styles.buttonDisabled]}
+                  onPress={handleExistingUser}
+                  disabled={disabled}
+                  activeOpacity={0.8}
+                >
+                  {checkingExisting ? (
+                    <ActivityIndicator color={Colors.accentText} />
+                  ) : (
+                    <View style={styles.buttonInner}>
+                      <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
+                      <Text style={styles.buttonText}>Continue as Existing User</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.secondaryButton, disabled && styles.buttonDisabled]}
+                  onPress={handleNewRegistration}
+                  disabled={disabled}
+                  activeOpacity={0.8}
+                >
+                  {registering ? (
+                    <ActivityIndicator color={Colors.accent} />
+                  ) : (
+                    <View style={styles.buttonInner}>
+                      <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
+                      <Text style={styles.secondaryButtonText}>Continue to Registration</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
 
-          <Text style={styles.terms}>By continuing, you agree to our Terms of Service</Text>
+              <TouchableOpacity
+                style={styles.backLink}
+                onPress={() => {
+                  setSelectedFlow(null);
+                  setPhone("");
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.backLinkText}>Back to options</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          <Text style={styles.terms}>
+            Existing users go to Home. Missing profile goes to registration.
+          </Text>
         </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -181,8 +277,21 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
     shadowColor: Colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
   },
+  secondaryButton: {
+    marginTop: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    height: 56,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: Colors.accent,
+    backgroundColor: Colors.surface,
+  },
+  secondaryButtonText: { color: Colors.accent, fontSize: 16, fontWeight: "700" },
   buttonDisabled: { opacity: 0.4, shadowOpacity: 0 },
   buttonInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   buttonText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
+  backLink: { alignItems: "center", marginTop: Spacing.md },
+  backLinkText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
   terms: { color: Colors.textMuted, fontSize: 12, textAlign: "center", marginTop: Spacing.lg },
 });

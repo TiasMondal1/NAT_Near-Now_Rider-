@@ -24,16 +24,29 @@ export async function apiFetch<T = unknown>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const endpoint = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await fetch(endpoint, {
     method: options.method || "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
-  const data = await res.json();
+  const text = await res.text();
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { message: text };
+    }
+  }
 
   if (!res.ok) {
-    throw { status: res.status, ...data };
+    const errorPayload =
+      typeof data === "object" && data !== null
+        ? data
+        : { message: "Request failed" };
+    throw { status: res.status, ...errorPayload };
   }
 
   return data as T;

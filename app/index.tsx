@@ -23,7 +23,7 @@ export default function EntryScreen() {
 
     const timer = setTimeout(async () => {
       const session = await getSession();
-      if (session?.token && session.user?.role === "delivery_partner") {
+      if (session?.token && session?.user?.id) {
         router.replace("/(tabs)/home");
       } else {
         router.replace("/phone");

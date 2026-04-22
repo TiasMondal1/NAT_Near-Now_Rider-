@@ -22,10 +22,10 @@ export default function OTPScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     phone: string;
-    sessionId: string;
+    flow?: "new" | "existing";
   }>();
   const phone = params.phone;
-  const [currentSessionId, setCurrentSessionId] = useState(params.sessionId);
+  const flow = params.flow;
 
   const [digits, setDigits] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
@@ -75,26 +75,43 @@ export default function OTPScreen() {
     try {
       const res = await apiFetch<{
         success: boolean;
-        mode: string;
+        mode?: string;
         token?: string;
         phone?: string;
         user?: {
           id: string;
           name: string;
-          role: string;
+          role: "customer" | "shopkeeper" | "delivery_partner";
           isActivated: boolean;
           phone?: string;
           email?: string;
         };
-      }>("/auth/phone/verify", {
+      }>("/api/auth/verify-otp", {
         method: "POST",
-        body: { phone, sessionId: currentSessionId, otp },
+        body: { phone, otp, role: "delivery_partner", name: "Delivery Partner" },
       });
 
-      if (res.mode === "login" && res.token && res.user) {
-        await saveSession({ token: res.token, user: res.user });
+      if (flow === "new") {
+        router.replace({
+          pathname: "/signup",
+          params: { phone: res.phone || phone },
+        });
+        return;
+      }
+
+      // Same phone can exist for customer/shopkeeper/delivery_partner.
+      // This app only accepts the delivery_partner identity.
+      if (res.token && res.user?.role === "delivery_partner") {
+        await saveSession({
+          token: res.token,
+          user: {
+            ...res.user,
+            role: "delivery_partner",
+            isActivated: res.user.isActivated ?? true,
+          },
+        });
         router.replace("/(tabs)/home");
-      } else if (res.mode === "signup") {
+      } else if (res.mode === "signup" || !res.token || res.user?.role !== "delivery_partner") {
         router.replace({
           pathname: "/signup",
           params: { phone: res.phone || phone },
@@ -122,8 +139,10 @@ export default function OTPScreen() {
   const handleResend = async () => {
     if (countdown > 0) return;
     try {
-      const res = await apiFetch<{ success: boolean; sessionId?: string }>("/auth/phone/start", { method: "POST", body: { phone } });
-      if (res.sessionId) setCurrentSessionId(res.sessionId);
+      await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
+        method: "POST",
+        body: { phone },
+      });
       setCountdown(60);
       setDigits(["", "", "", "", "", ""]);
       inputRefs.current[0]?.focus();

@@ -7,7 +7,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "build:apk": "node scripts/build-apk-with-env.js",
+    "build:aab": "node scripts/build-apk-with-env.js aab"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -40,6 +42,9 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "chromium-edge-launcher": "0.3.0"
   },
   "private": true
 }

@@ -3,6 +3,8 @@
  * Based on customer app implementation
  */
 
+import { API_CONFIG } from "../constants/config";
+
 export interface AppUser {
   id: string;
   name: string;
@@ -19,8 +21,7 @@ export interface AuthResponse {
   token: string;
 }
 
-const getApiBase = () =>
-  (process.env.EXPO_PUBLIC_API_BASE_URL || '').toString().replace(/\/$/, '');
+const getApiBase = () => API_CONFIG.BASE_URL;
 
 export async function sendOTP(phone: string): Promise<void> {
   const apiBase = getApiBase();

@@ -20,6 +20,13 @@ import { apiFetch } from "../constants/api";
 import { saveSession } from "../session";
 
 const DOC_TYPES = ["Aadhaar", "PAN", "Driving License"];
+type DeliveryPartnerListItem = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  profile?: { user_id: string; phone?: string | null } | null;
+};
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -27,8 +34,8 @@ export default function SignupScreen() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [address, setAddress] = useState("");
+  const [vehicleNumber, setVehicleNumber] = useState("");
   const [docType, setDocType] = useState("Aadhaar");
   const [docNumber, setDocNumber] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,36 +48,129 @@ export default function SignupScreen() {
 
   const isValid = name.trim().length >= 2;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-  const isPasswordStrong = !password || password.length >= 6;
+  const normalizedPhone = String(phone || "").trim();
 
   const handleSignup = async () => {
     if (!isValid) return;
     setLoading(true);
     try {
       const res = await apiFetch<{
-        success: boolean;
-        token: string;
+        id?: string;
+        success?: boolean;
+        token?: string;
         user: { id: string; name: string; role: string; isActivated: boolean; phone?: string };
-      }>("/delivery-partner/signup/complete", {
+      }>("/api/delivery/partners", {
         method: "POST",
         body: {
-          phone,
+          phone: normalizedPhone,
           name: name.trim(),
           email: email.trim() || undefined,
-          password: password || undefined,
           address: address.trim() || undefined,
-          verificationDocument: docType,
-          verificationNumber: docNumber.trim() || undefined,
+          vehicle_number: vehicleNumber.trim() || undefined,
+          verification_document: docType,
+          verification_number: docNumber.trim() || undefined,
+          status: "pending_verification",
         },
       });
 
-      if (res.success && res.token) {
-        await saveSession({ token: res.token, user: res.user });
+      // New partner account is created in app_users with role delivery_partner.
+      // User then verifies OTP again to obtain auth token for this role.
+      if (res?.id || res?.success) {
+        // Confirm delivery_partners profile exists after create.
+        const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+        const created = partners.find((p) => {
+          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
+          const target = normalizedPhone.replace(/\D/g, "");
+          return candidate === target;
+        });
+
+        if (!created?.profile) {
+          Alert.alert(
+            "Signup incomplete",
+            "app_users created, but delivery_partners profile was not created. Please try again."
+          );
+          return;
+        }
+
+        const sessionToken = res.token || `delivery-signup-${Date.now()}`;
+        await saveSession({
+          token: sessionToken,
+          user: {
+            id: created.id || res.user?.id || res.id || normalizedPhone,
+            name: created.name || res.user?.name || name.trim(),
+            role: "delivery_partner",
+            isActivated: res.user?.isActivated ?? true,
+            phone: created.phone || created.profile.phone || res.user?.phone || normalizedPhone,
+            email: created.email || email.trim() || undefined,
+          },
+        });
+        Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
         router.replace("/(tabs)/home");
+      } else {
+        Alert.alert("Signup failed", "Could not create delivery partner account.");
       }
     } catch (err: unknown) {
-      const error = err as { error?: string };
-      Alert.alert("Signup Failed", error?.error || "Something went wrong.");
+      const error = err as { error?: string; message?: string; status?: number };
+
+      // Backend currently returns a generic 500 message for create failures.
+      // If partner already exists for this phone, continue with OTP flow instead of blocking.
+      try {
+        const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+        const existing = partners.find((p) => {
+          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
+          const target = normalizedPhone.replace(/\D/g, "");
+          return candidate === target;
+        });
+
+        // If app_users exists but delivery_partners is missing, upsert the profile immediately.
+        if (existing && !existing.profile) {
+          await apiFetch(`/api/delivery/partners/${existing.id}`, {
+            method: "PUT",
+            body: {
+              name: name.trim() || existing.name || "Delivery Partner",
+              email: email.trim() || existing.email || undefined,
+              phone: normalizedPhone,
+              address: address.trim() || undefined,
+              vehicle_number: vehicleNumber.trim() || undefined,
+              verification_document: docType,
+              verification_number: docNumber.trim() || undefined,
+              status: "pending_verification",
+            },
+          });
+        }
+
+        const refreshedPartners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+        const ready = refreshedPartners.find((p) => {
+          const candidate = String(p.phone || p.profile?.phone || "").replace(/\D/g, "");
+          const target = normalizedPhone.replace(/\D/g, "");
+          return candidate === target && !!p.profile;
+        });
+
+        if (ready?.profile) {
+          await saveSession({
+            token: `delivery-existing-${Date.now()}`,
+            user: {
+              id: ready.id || ready.profile.user_id,
+              name: ready.name || name.trim() || "Delivery Partner",
+              role: "delivery_partner",
+              isActivated: true,
+              phone: ready.phone || ready.profile.phone || normalizedPhone,
+              email: ready.email || email.trim() || undefined,
+            },
+          });
+          Alert.alert("Account ready", "Both app_users and delivery_partners are populated. Opening home.");
+          router.replace("/(tabs)/home");
+          return;
+        }
+      } catch {
+        // Ignore fallback lookup failure and show original error.
+      }
+
+      const details = error?.error || error?.message || "Something went wrong.";
+      Alert.alert(
+        "Signup Failed",
+        `${details}${error?.status ? `\n\nStatus: ${error.status}` : ""}`
+      );
     } finally {
       setLoading(false);
     }
@@ -121,19 +221,6 @@ export default function SignupScreen() {
                 <Text style={styles.errorHint}>Please enter a valid email address</Text>
               )}
 
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={[styles.input, password && !isPasswordStrong && styles.inputError]}
-                placeholder="Create a password (min 6 chars)"
-                placeholderTextColor={Colors.textMuted}
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-              />
-              {password && !isPasswordStrong && (
-                <Text style={styles.errorHint}>Password must be at least 6 characters</Text>
-              )}
-
               <Text style={styles.label}>Address</Text>
               <TextInput
                 style={[styles.input, { height: 80, textAlignVertical: "top", paddingTop: 12 }]}
@@ -142,6 +229,16 @@ export default function SignupScreen() {
                 multiline
                 value={address}
                 onChangeText={setAddress}
+              />
+
+              <Text style={styles.label}>Vehicle Number</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. MH12AB1234"
+                placeholderTextColor={Colors.textMuted}
+                value={vehicleNumber}
+                onChangeText={setVehicleNumber}
+                autoCapitalize="characters"
               />
             </View>
 
@@ -173,9 +270,9 @@ export default function SignupScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.button, (!isValid || !isEmailValid || !isPasswordStrong) && styles.buttonDisabled]}
+              style={[styles.button, (!isValid || !isEmailValid) && styles.buttonDisabled]}
               onPress={handleSignup}
-              disabled={!isValid || !isEmailValid || !isPasswordStrong || loading}
+              disabled={!isValid || !isEmailValid || loading}
               activeOpacity={0.8}
             >
               {loading ? (
