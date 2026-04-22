@@ -15,7 +15,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
-import { getSession, clearSession } from "../../session";
+import { getSession, clearSession, UserSession } from "../../session";
 
 type Profile = {
   user_id: string;
@@ -27,6 +27,55 @@ type Profile = {
   verification_number: string | null;
   is_online: boolean;
   created_at: string;
+};
+
+type DeliveryPartnerListItem = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  created_at?: string;
+  profile?: {
+    user_id?: string;
+    phone?: string | null;
+    address?: string | null;
+    verification_document?: string | null;
+    verification_number?: string | null;
+    is_online?: boolean;
+    created_at?: string;
+  } | null;
+};
+
+const normalizePhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
+
+const mapPartnerToProfile = (partner: DeliveryPartnerListItem): Profile => ({
+  user_id: partner.profile?.user_id || partner.id,
+  name: partner.name || "Delivery Partner",
+  email: partner.email || null,
+  phone: partner.phone || partner.profile?.phone || "",
+  address: partner.profile?.address || null,
+  verification_document: partner.profile?.verification_document || null,
+  verification_number: partner.profile?.verification_number || null,
+  is_online: Boolean(partner.profile?.is_online),
+  // Member Since must always reflect record creation time.
+  created_at: partner.profile?.created_at || partner.created_at || "",
+});
+
+const findPartnerForSession = (partners: DeliveryPartnerListItem[], session: UserSession) => {
+  const sessionId = String(session.user?.id || "");
+  const sessionPhone = normalizePhone(session.user?.phone);
+
+  return partners.find((partner) => {
+    const partnerId = String(partner.id || "");
+    const userId = String(partner.profile?.user_id || "");
+    const appUserPhone = normalizePhone(partner.phone);
+    const profilePhone = normalizePhone(partner.profile?.phone);
+
+    return (
+      (sessionId && (partnerId === sessionId || userId === sessionId)) ||
+      (sessionPhone && (appUserPhone === sessionPhone || profilePhone === sessionPhone))
+    );
+  });
 };
 
 export default function ProfileScreen() {
@@ -53,8 +102,22 @@ export default function ProfileScreen() {
     ]).start();
   }, []);
 
-  const fetchProfile = useCallback(async (t: string) => {
+  const fetchProfile = useCallback(async (t: string, session: UserSession) => {
     try {
+      // Primary source for profile details: delivery_partners table.
+      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+      const matchedPartner = findPartnerForSession(partners, session);
+
+      if (matchedPartner) {
+        const mappedProfile = mapPartnerToProfile(matchedPartner);
+        setProfile(mappedProfile);
+        setName(mappedProfile.name);
+        setEmail(mappedProfile.email || "");
+        setAddress(mappedProfile.address || "");
+        return;
+      }
+
+      // Fallback for legacy deployments still exposing this endpoint.
       const res = await apiFetch<{ success: boolean; profile: Profile }>(
         "/delivery-partner/profile",
         {},
@@ -86,9 +149,12 @@ export default function ProfileScreen() {
   useEffect(() => {
     (async () => {
       const session = await getSession();
-      if (!session?.token) return;
+      if (!session?.token) {
+        setLoading(false);
+        return;
+      }
       setToken(session.token);
-      await Promise.all([fetchProfile(session.token), fetchStats(session.token)]);
+      await Promise.all([fetchProfile(session.token, session), fetchStats(session.token)]);
       setLoading(false);
     })();
   }, [fetchProfile, fetchStats]);
@@ -102,6 +168,37 @@ export default function ProfileScreen() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const session = await getSession();
+      if (!session?.user?.id) {
+        Alert.alert("Error", "Session expired. Please login again.");
+        return;
+      }
+
+      await apiFetch(`/api/delivery/partners/${session.user.id}`, {
+        method: "PUT",
+        body: {
+          name: name.trim() || "Delivery Partner",
+          email: email.trim() || undefined,
+          phone: session.user.phone || profile?.phone || undefined,
+          address: address.trim() || undefined,
+          verification_document: profile?.verification_document || undefined,
+          verification_number: profile?.verification_number || undefined,
+          status: "pending_verification",
+        },
+      });
+
+      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
+      const matchedPartner = findPartnerForSession(partners, session);
+      if (matchedPartner) {
+        const mappedProfile = mapPartnerToProfile(matchedPartner);
+        setProfile(mappedProfile);
+        setName(mappedProfile.name);
+        setEmail(mappedProfile.email || "");
+        setAddress(mappedProfile.address || "");
+        setEditing(false);
+        return;
+      }
+
       const res = await apiFetch<{ success: boolean; profile: Profile }>(
         "/delivery-partner/profile",
         {
@@ -116,6 +213,9 @@ export default function ProfileScreen() {
       );
       if (res.success) {
         setProfile(res.profile);
+        setName(res.profile.name);
+        setEmail(res.profile.email || "");
+        setAddress(res.profile.address || "");
         setEditing(false);
       }
     } catch {
@@ -223,18 +323,21 @@ export default function ProfileScreen() {
             <View style={styles.fieldRowView}>
               <View style={styles.fieldLabelRow}>
                 <MaterialCommunityIcons name="shield-check" size={14} color={Colors.accent} />
-                <Text style={styles.fieldLabel}>Verification</Text>
+                <Text style={styles.fieldLabel}>Verification Document</Text>
               </View>
-              <View style={styles.verificationRow}>
-                <Text style={styles.fieldValue}>
-                  {profile?.verification_document || "---"}
-                </Text>
-                {profile?.verification_number && (
-                  <View style={styles.verificationBadge}>
-                    <Text style={styles.verificationBadgeText}>{profile.verification_number}</Text>
-                  </View>
-                )}
+              <Text style={styles.fieldValue}>
+                {profile?.verification_document || "---"}
+              </Text>
+            </View>
+            <View style={styles.fieldDivider} />
+            <View style={styles.fieldRowView}>
+              <View style={styles.fieldLabelRow}>
+                <MaterialCommunityIcons name="card-account-details" size={14} color={Colors.accent} />
+                <Text style={styles.fieldLabel}>Verification Number</Text>
               </View>
+              <Text style={styles.fieldValue}>
+                {profile?.verification_number || "---"}
+              </Text>
             </View>
             <View style={styles.fieldDivider} />
             <View style={styles.fieldRowView}>
