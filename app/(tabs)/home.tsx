@@ -171,7 +171,7 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
     try {
-      await apiFetch("/delivery-partner/status", { method: "PATCH", body: { isOnline: value } }, token);
+      await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: value } }, token);
       if (value) {
         fetchOrders();
         fetchCompleted();
