@@ -35,3 +35,14 @@ Thumbs.db
 
 # Temporary files
 *.tmp
+
+# local env files
+.env
+.env*.local
+
+
+# generated native folders
+/ios
+/android
+
+.env.local
