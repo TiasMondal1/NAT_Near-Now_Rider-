@@ -2,10 +2,13 @@ import { Tabs } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { View, Platform } from "react-native";
 import { Colors } from "../../constants/theme";
+import OfflineBanner from "../../components/OfflineBanner";
 
 export default function TabLayout() {
   return (
-    <Tabs
+    <View style={{ flex: 1 }}>
+      <OfflineBanner />
+      <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
@@ -93,5 +96,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </View>
   );
 }

@@ -54,6 +54,14 @@ module.exports = () => {
               "Allow Near & Now to use your location for delivery tracking.",
           },
         ],
+        [
+          "expo-notifications",
+          {
+            icon: "./assets/notification-icon.png",
+            color: "#000000",
+            defaultChannel: "orders",
+          },
+        ],
       ],
       extra: {
         apiBaseUrl:

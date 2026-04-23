@@ -197,7 +197,7 @@ export default function HomeScreen() {
   };
 
   const activeDelivery = activeOrders.find(
-    (o) => o.status === "rider_assigned" || o.status === "en_route_delivery"
+    (o) => o.status === "rider_assigned" || o.status === "en_route_delivery" || o.status === "picked_up"
   );
   const todayStr = new Date().toDateString();
   const todayCompleted = completedOrders.filter(
@@ -380,9 +380,9 @@ export default function HomeScreen() {
                   <View style={[styles.progressLine, activeDelivery.status === "en_route_delivery" && styles.progressLineDone]} />
                   <View style={[
                     styles.progressStep,
-                    activeDelivery.status === "en_route_delivery" ? styles.progressStepDone : styles.progressStepPending,
+                    (activeDelivery.status === "en_route_delivery" || activeDelivery.status === "picked_up") ? styles.progressStepDone : styles.progressStepPending,
                   ]}>
-                    {activeDelivery.status === "en_route_delivery"
+                    {(activeDelivery.status === "en_route_delivery" || activeDelivery.status === "picked_up")
                       ? <MaterialCommunityIcons name="check" size={12} color={Colors.accentText} />
                       : <Text style={styles.progressStepText}>2</Text>
                     }
@@ -403,14 +403,14 @@ export default function HomeScreen() {
                 <View style={styles.activeCardRow}>
                   <View style={styles.activeIconWrap}>
                     <MaterialCommunityIcons
-                      name={activeDelivery.status === "rider_assigned" ? "store" : "truck-delivery"}
+                      name={activeDelivery.status === "picked_up" ? "truck-delivery" : "store"}
                       size={22}
                       color={Colors.accent}
                     />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.activeCardTitle}>
-                      {activeDelivery.status === "rider_assigned" ? "Head to store for pickup" : "Delivering to customer"}
+                      {activeDelivery.status === "picked_up" ? "Delivering to customer" : "Head to store for pickup"}
                     </Text>
                     <Text style={styles.activeCardSub}>
                       #{activeDelivery.order_code} · {activeDelivery.stores?.name || "Store"} · {"\u20B9"}{activeDelivery.total_amount}

@@ -168,8 +168,9 @@ export default function DeliveryScreen() {
     );
   }
 
-  const isPickup = order.status === "rider_assigned";
-  const isDelivering = order.status === "en_route_delivery";
+  // rider_assigned = just accepted, en_route_delivery = going to store/picking up
+  const isPickup = order.status === "rider_assigned" || order.status === "en_route_delivery";
+  const isDelivering = order.status === "picked_up";
   const isCompleted = order.status === "completed";
 
   return (
