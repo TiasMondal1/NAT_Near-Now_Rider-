@@ -16,7 +16,6 @@ import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { saveSession } from "../session";
 
 type DeliveryPartnerListItem = {
   id: string;
@@ -77,24 +76,20 @@ export default function PhoneScreen() {
         return;
       }
 
-      // Existing flow: user must be present in app_users and delivery_partners.
       if (!match.profile) {
         router.push({ pathname: "/signup", params: { phone: fullPhone } });
         return;
       }
 
-      await saveSession({
-        token: `delivery-existing-${Date.now()}`,
-        user: {
-          id: match.id || match.profile.user_id,
-          name: match.name || "Delivery Partner",
-          role: "delivery_partner",
-          isActivated: true,
-          phone: match.phone || match.profile.phone || fullPhone,
-          email: match.email || undefined,
-        },
+      const res = await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
+        method: "POST",
+        body: { phone: fullPhone },
       });
-      router.replace("/(tabs)/home");
+      if (!res.success) {
+        Alert.alert("Error", "Unable to send OTP right now. Please try again.");
+        return;
+      }
+      router.push({ pathname: "/otp", params: { phone: fullPhone, flow: "existing" } });
     } catch (err: unknown) {
       const error = err as { message?: string };
       Alert.alert("Error", error?.message || "Unable to validate existing user right now.");
