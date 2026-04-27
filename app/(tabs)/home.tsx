@@ -69,6 +69,7 @@ function fmtDist(d: number) {
 export default function HomeScreen() {
   const router = useRouter();
   const [isOnline, setIsOnline] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -226,16 +227,22 @@ export default function HomeScreen() {
   };
 
   const handleToggle = async (value: boolean) => {
+    if (toggling) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
+    setToggling(true);
     try {
-      await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: value } }, token);
+      // retries=0: no exponential backoff — toggle should respond instantly or fail fast
+      await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: value } }, token, 0);
       if (value) {
         fetchOffers();
         fetchActiveOrder();
       }
     } catch {
       setIsOnline(!value);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -295,24 +302,29 @@ export default function HomeScreen() {
           </View>
           <View style={styles.headerRight}>
             <View style={styles.statusChip}>
-              <Animated.View
-                style={[
-                  styles.statusDot,
-                  {
-                    backgroundColor: isOnline ? Colors.online : Colors.offline,
-                    transform: [{ scale: isOnline ? pulseAnim : 1 }],
-                  },
-                ]}
-              />
-              <Text style={[styles.statusLabel, { color: isOnline ? Colors.online : Colors.offline }]}>
-                {isOnline ? "Online" : "Offline"}
+              {toggling ? (
+                <ActivityIndicator size="small" color={Colors.textMuted} style={{ width: 8, height: 8 }} />
+              ) : (
+                <Animated.View
+                  style={[
+                    styles.statusDot,
+                    {
+                      backgroundColor: isOnline ? Colors.online : Colors.offline,
+                      transform: [{ scale: isOnline ? pulseAnim : 1 }],
+                    },
+                  ]}
+                />
+              )}
+              <Text style={[styles.statusLabel, { color: toggling ? Colors.textMuted : isOnline ? Colors.online : Colors.offline }]}>
+                {toggling ? (isOnline ? "Going online…" : "Going offline…") : isOnline ? "Online" : "Offline"}
               </Text>
             </View>
             <Switch
               value={isOnline}
               onValueChange={handleToggle}
+              disabled={toggling}
               trackColor={{ false: Colors.border, true: Colors.accentLight }}
-              thumbColor={isOnline ? Colors.accent : Colors.textMuted}
+              thumbColor={toggling ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
             />
           </View>
         </View>
@@ -346,8 +358,17 @@ export default function HomeScreen() {
               </Text>
             </View>
             {!isOnline && (
-              <TouchableOpacity style={styles.goOnlineBtn} onPress={() => handleToggle(true)} activeOpacity={0.8}>
-                <Text style={styles.goOnlineBtnText}>Go Online</Text>
+              <TouchableOpacity
+                style={[styles.goOnlineBtn, toggling && { opacity: 0.5 }]}
+                onPress={() => handleToggle(true)}
+                disabled={toggling}
+                activeOpacity={0.8}
+              >
+                {toggling ? (
+                  <ActivityIndicator size="small" color={Colors.accentText} />
+                ) : (
+                  <Text style={styles.goOnlineBtnText}>Go Online</Text>
+                )}
               </TouchableOpacity>
             )}
           </View>
