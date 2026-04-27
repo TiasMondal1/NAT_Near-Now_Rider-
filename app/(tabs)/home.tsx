@@ -74,6 +74,7 @@ export default function HomeScreen() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
   const [token, setToken] = useState("");
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
@@ -145,7 +146,16 @@ export default function HomeScreen() {
           try {
             await apiFetch(
               "/delivery-partner/location",
-              { method: "POST", body: { latitude: loc.coords.latitude, longitude: loc.coords.longitude } },
+              {
+                method: "POST",
+                body: {
+                  latitude: loc.coords.latitude,
+                  longitude: loc.coords.longitude,
+                  heading: loc.coords.heading ?? null,
+                  speed: loc.coords.speed ?? null,
+                  accuracy: loc.coords.accuracy ?? null,
+                },
+              },
               token
             );
           } catch {}
@@ -167,7 +177,15 @@ export default function HomeScreen() {
         {},
         token
       );
-      if (res.success) setOffers(res.offers || []);
+      if (res.success) {
+        setIgnoredOfferIds((prev) => {
+          // Prune stale ignored IDs (offers that are no longer in the server list)
+          const serverIds = new Set((res.offers || []).map((o) => o.offer_id));
+          const pruned = new Set([...prev].filter((id) => serverIds.has(id)));
+          return pruned;
+        });
+        setOffers(res.offers || []);
+      }
     } catch {}
   }, [token]);
 
@@ -366,9 +384,10 @@ export default function HomeScreen() {
           {isOnline && !activeOrder && offers.length > 0 && (
             <>
               <Text style={styles.sectionTitle}>
-                {offers.length} Order Request{offers.length !== 1 ? "s" : ""}
+                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length} Order Request
+                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length !== 1 ? "s" : ""}
               </Text>
-              {offers.map((offer) => {
+              {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).map((offer) => {
                 const firstStore = offer.stores[0];
                 const d2store =
                   driverPos && firstStore
@@ -430,21 +449,34 @@ export default function HomeScreen() {
                       <Text style={styles.offerDropAddr} numberOfLines={2}>{offer.delivery_address}</Text>
                     </View>
 
-                    <TouchableOpacity
-                      style={[styles.acceptBtn, accepting === offer.offer_id && styles.acceptBtnDisabled]}
-                      onPress={() => handleAcceptOffer(offer.offer_id)}
-                      disabled={!!accepting}
-                      activeOpacity={0.7}
-                    >
-                      {accepting === offer.offer_id ? (
-                        <ActivityIndicator color={Colors.accentText} />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="check" size={18} color={Colors.accentText} />
-                          <Text style={styles.acceptBtnText}>Accept Order</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                    <View style={styles.offerActionRow}>
+                      <TouchableOpacity
+                        style={styles.ignoreBtn}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setIgnoredOfferIds((prev) => new Set([...prev, offer.offer_id]));
+                        }}
+                        disabled={!!accepting}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.ignoreBtnText}>Ignore</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.acceptBtn, accepting === offer.offer_id && styles.acceptBtnDisabled]}
+                        onPress={() => handleAcceptOffer(offer.offer_id)}
+                        disabled={!!accepting}
+                        activeOpacity={0.7}
+                      >
+                        {accepting === offer.offer_id ? (
+                          <ActivityIndicator color={Colors.accentText} />
+                        ) : (
+                          <>
+                            <MaterialCommunityIcons name="check" size={18} color={Colors.accentText} />
+                            <Text style={styles.acceptBtnText}>Accept</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
 
                     <Text style={styles.offerTime}>
                       Received {formatTime(offer.placed_at)} · First to accept wins
@@ -455,7 +487,7 @@ export default function HomeScreen() {
             </>
           )}
 
-          {isOnline && !activeOrder && offers.length === 0 && (
+          {isOnline && !activeOrder && offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length === 0 && (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
                 <MaterialCommunityIcons name="map-marker-check" size={40} color={Colors.accent} />
@@ -618,7 +650,23 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
   },
   offerDropAddr: { color: Colors.textSecondary, fontSize: 13, flex: 1 },
+  offerActionRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  ignoreBtn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    height: 50,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  ignoreBtnText: { color: Colors.textMuted, fontSize: 14, fontWeight: "600" },
   acceptBtn: {
+    flex: 2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
