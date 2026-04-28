@@ -166,7 +166,7 @@ function PickupStopCard({
         ))}
       </View>
 
-      {isNext && !done && (
+      {isNext && !done && stop.pickup_code_required && (
         <View style={styles.codeSection}>
           <View style={styles.codeRow}>
             <MaterialCommunityIcons name="key-variant" size={16} color={Colors.accent} />
@@ -202,6 +202,13 @@ function PickupStopCard({
               <Text style={styles.codeErrText}>{codeErr}</Text>
             </View>
           ) : null}
+        </View>
+      )}
+
+      {isNext && !done && !stop.pickup_code_required && (
+        <View style={styles.waitingSection}>
+          <ActivityIndicator size="small" color={Colors.textMuted} />
+          <Text style={styles.waitingText}>Waiting for store to confirm your arrival…</Text>
         </View>
       )}
 
@@ -581,6 +588,16 @@ const styles = StyleSheet.create({
   verifyBtnText: { color: Colors.accentText, fontSize: 15, fontWeight: "700" },
   codeErrRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   codeErrText: { color: Colors.danger, fontSize: 13 },
+
+  waitingSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border + "60",
+  },
+  waitingText: { color: Colors.textMuted, fontSize: 13, flex: 1 },
 
   stopDoneRow: {
     flexDirection: "row",

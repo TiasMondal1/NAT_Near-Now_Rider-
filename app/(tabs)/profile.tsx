@@ -9,9 +9,11 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
@@ -26,6 +28,7 @@ type Profile = {
   verification_document: string | null;
   verification_number: string | null;
   is_online: boolean;
+  profile_image_url: string | null;
   created_at: string;
 };
 
@@ -42,6 +45,7 @@ type DeliveryPartnerListItem = {
     verification_document?: string | null;
     verification_number?: string | null;
     is_online?: boolean;
+    profile_image_url?: string | null;
     created_at?: string;
   } | null;
 };
@@ -57,7 +61,7 @@ const mapPartnerToProfile = (partner: DeliveryPartnerListItem): Profile => ({
   verification_document: partner.profile?.verification_document || null,
   verification_number: partner.profile?.verification_number || null,
   is_online: Boolean(partner.profile?.is_online),
-  // Member Since must always reflect record creation time.
+  profile_image_url: partner.profile?.profile_image_url || null,
   created_at: partner.profile?.created_at || partner.created_at || "",
 });
 
@@ -84,6 +88,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [token, setToken] = useState("");
   const [totalDeliveries, setTotalDeliveries] = useState(0);
   const [totalEarnings, setTotalEarnings] = useState(0);
@@ -104,30 +109,28 @@ export default function ProfileScreen() {
 
   const fetchProfile = useCallback(async (t: string, session: UserSession) => {
     try {
-      // Primary source for profile details: delivery_partners table.
+      const profileRes = await apiFetch<{ success: boolean; profile: Profile }>(
+        "/delivery-partner/profile",
+        {},
+        t
+      );
+      if (profileRes.success) {
+        setProfile(profileRes.profile);
+        setName(profileRes.profile.name);
+        setEmail(profileRes.profile.email || "");
+        setAddress(profileRes.profile.address || "");
+        return;
+      }
+
+      // Fallback
       const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
       const matchedPartner = findPartnerForSession(partners, session);
-
       if (matchedPartner) {
         const mappedProfile = mapPartnerToProfile(matchedPartner);
         setProfile(mappedProfile);
         setName(mappedProfile.name);
         setEmail(mappedProfile.email || "");
         setAddress(mappedProfile.address || "");
-        return;
-      }
-
-      // Fallback for legacy deployments still exposing this endpoint.
-      const res = await apiFetch<{ success: boolean; profile: Profile }>(
-        "/delivery-partner/profile",
-        {},
-        t
-      );
-      if (res.success) {
-        setProfile(res.profile);
-        setName(res.profile.name);
-        setEmail(res.profile.email || "");
-        setAddress(res.profile.address || "");
       }
     } catch {}
   }, []);
@@ -165,6 +168,47 @@ export default function ProfileScreen() {
     }, [token, fetchStats])
   );
 
+  const handlePickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo library access to change your profile picture.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+      base64: true,
+    });
+
+    if (result.canceled || !result.assets?.[0]?.base64) return;
+
+    const asset = result.assets[0];
+    setUploadingImage(true);
+    try {
+      const res = await apiFetch<{ success: boolean; profile_image_url: string }>(
+        "/delivery-partner/profile-image",
+        {
+          method: "PATCH",
+          body: {
+            image_base64: asset.base64,
+            mime_type: asset.mimeType || "image/jpeg",
+          },
+        },
+        token
+      );
+      if (res.success) {
+        setProfile((prev) => prev ? { ...prev, profile_image_url: res.profile_image_url } : prev);
+      }
+    } catch {
+      Alert.alert("Error", "Failed to upload image. Please try again.");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -174,37 +218,12 @@ export default function ProfileScreen() {
         return;
       }
 
-      await apiFetch(`/api/delivery/partners/${session.user.id}`, {
-        method: "PUT",
-        body: {
-          name: name.trim() || "Delivery Partner",
-          email: email.trim() || undefined,
-          phone: session.user.phone || profile?.phone || undefined,
-          address: address.trim() || undefined,
-          verification_document: profile?.verification_document || undefined,
-          verification_number: profile?.verification_number || undefined,
-          status: "pending_verification",
-        },
-      });
-
-      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-      const matchedPartner = findPartnerForSession(partners, session);
-      if (matchedPartner) {
-        const mappedProfile = mapPartnerToProfile(matchedPartner);
-        setProfile(mappedProfile);
-        setName(mappedProfile.name);
-        setEmail(mappedProfile.email || "");
-        setAddress(mappedProfile.address || "");
-        setEditing(false);
-        return;
-      }
-
       const res = await apiFetch<{ success: boolean; profile: Profile }>(
         "/delivery-partner/profile",
         {
           method: "PATCH",
           body: {
-            name: name.trim(),
+            name: name.trim() || "Delivery Partner",
             email: email.trim() || undefined,
             address: address.trim() || undefined,
           },
@@ -270,12 +289,39 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           <View style={styles.avatarSection}>
-            <View style={styles.avatarOuter}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initial}</Text>
-              </View>
-              <View style={[styles.onlineDot, { backgroundColor: profile?.is_online ? Colors.online : Colors.offline }]} />
-            </View>
+            <TouchableOpacity
+              style={styles.avatarOuter}
+              onPress={editing ? handlePickImage : undefined}
+              disabled={uploadingImage}
+              activeOpacity={editing ? 0.7 : 1}
+            >
+              {profile?.profile_image_url ? (
+                <Image source={{ uri: profile.profile_image_url }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initial}</Text>
+                </View>
+              )}
+
+              {/* Camera overlay shown in edit mode */}
+              {editing && (
+                <View style={styles.avatarEditOverlay}>
+                  {uploadingImage ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <MaterialCommunityIcons name="camera" size={22} color="#fff" />
+                  )}
+                </View>
+              )}
+
+              {/* Online/offline dot */}
+              <View
+                style={[
+                  styles.onlineDot,
+                  { backgroundColor: profile?.is_online ? Colors.online : Colors.offline },
+                ]}
+              />
+            </TouchableOpacity>
             <Text style={styles.displayName}>{profile?.name}</Text>
             <View style={styles.roleBadge}>
               <MaterialCommunityIcons name="truck-delivery" size={12} color={Colors.accent} style={{ marginRight: 4 }} />
@@ -296,7 +342,7 @@ export default function ProfileScreen() {
               <View style={[styles.statIconWrap, { backgroundColor: Colors.successLight }]}>
                 <MaterialCommunityIcons name="currency-inr" size={18} color={Colors.success} />
               </View>
-              <Text style={styles.statValue}>{"\u20B9"}{totalEarnings.toFixed(0)}</Text>
+              <Text style={styles.statValue}>{"₹"}{totalEarnings.toFixed(0)}</Text>
               <Text style={styles.statLabel}>Earned</Text>
             </View>
             <View style={styles.statDivider} />
@@ -443,10 +489,19 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.lg, paddingBottom: 60 },
 
   avatarSection: { alignItems: "center", marginBottom: Spacing.lg },
-  avatarOuter: { position: "relative", marginBottom: Spacing.md },
-  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.accentLight, borderWidth: 3, borderColor: Colors.accent, alignItems: "center", justifyContent: "center" },
+  avatarOuter: { position: "relative", marginBottom: Spacing.md, width: 88, height: 88 },
+  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.accentLight, alignItems: "center", justifyContent: "center" },
+  avatarImage: { width: 88, height: 88, borderRadius: 44 },
   avatarText: { color: Colors.accent, fontSize: 34, fontWeight: "800" },
-  onlineDot: { position: "absolute", bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, borderWidth: 3, borderColor: Colors.bg },
+  avatarEditOverlay: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 44,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  onlineDot: { position: "absolute", bottom: 2, right: 2, width: 18, height: 18, borderRadius: 9, borderWidth: 3, borderColor: Colors.bg },
   displayName: { color: Colors.text, fontSize: 22, fontWeight: "700" },
   roleBadge: { flexDirection: "row", alignItems: "center", marginTop: 6, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 4, backgroundColor: Colors.accentLight },
   roleText: { color: Colors.accent, fontSize: 12, fontWeight: "600" },
@@ -480,10 +535,6 @@ const styles = StyleSheet.create({
   fieldValueMuted: { color: Colors.textSecondary, fontSize: 16 },
   fieldInput: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.md, height: 42, color: Colors.text, fontSize: 15, borderWidth: 1, borderColor: Colors.accent + "40" },
   fieldDivider: { height: 1, backgroundColor: Colors.border },
-
-  verificationRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
-  verificationBadge: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 2 },
-  verificationBadgeText: { color: Colors.textSecondary, fontSize: 14, fontWeight: "600", letterSpacing: 0.5 },
 
   quickActions: {
     backgroundColor: Colors.card,

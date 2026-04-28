@@ -16,7 +16,7 @@ export const Colors = {
   success: "#16A34A",
   successLight: "#DCFCE7",
   online: "#16A34A",
-  offline: "#9CA3AF",
+  offline: "#EF4444",
   warning: "#F59E0B",
   warningLight: "#FEF3C7",
   card: "#FFFFFF",
