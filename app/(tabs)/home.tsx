@@ -69,6 +69,7 @@ function fmtDist(d: number) {
 export default function HomeScreen() {
   const router = useRouter();
   const [isOnline, setIsOnline] = useState(false);
+  const [driverStatus, setDriverStatus] = useState<string>("");
   const [toggling, setToggling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,12 +116,13 @@ export default function HomeScreen() {
       }
 
       try {
-        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean } }>(
+        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string } }>(
           "/delivery-partner/profile",
           {},
           session.token
         );
         setIsOnline(profileRes.profile.is_online);
+        setDriverStatus(profileRes.profile.status ?? "");
       } catch {}
 
       setLoading(false);
@@ -227,14 +229,32 @@ export default function HomeScreen() {
   };
 
   const handleToggle = async (value: boolean) => {
-    if (toggling) return;
+    if (toggling || driverStatus !== "active") return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
     setToggling(true);
     try {
-      // retries=0: no exponential backoff — toggle should respond instantly or fail fast
       await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: value } }, token, 0);
       if (value) {
+        // Send current location immediately so the dispatch algorithm can see the rider
+        try {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+          await apiFetch(
+            "/delivery-partner/location",
+            {
+              method: "POST",
+              body: {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                heading: loc.coords.heading ?? null,
+                speed: loc.coords.speed ?? null,
+                accuracy: loc.coords.accuracy ?? null,
+              },
+            },
+            token
+          );
+        } catch {}
         fetchOffers();
         fetchActiveOrder();
       }
@@ -322,9 +342,9 @@ export default function HomeScreen() {
             <Switch
               value={isOnline}
               onValueChange={handleToggle}
-              disabled={toggling}
+              disabled={toggling || driverStatus !== "active"}
               trackColor={{ false: Colors.border, true: Colors.accentLight }}
-              thumbColor={toggling ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
+              thumbColor={toggling || driverStatus !== "active" ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
             />
           </View>
         </View>
@@ -349,9 +369,7 @@ export default function HomeScreen() {
               <Text style={styles.bannerTitle}>{isOnline ? "You're Online" : "You're Offline"}</Text>
               <Text style={styles.bannerSubtext}>
                 {isOnline
-                  ? activeOrder
-                    ? "You have an active delivery"
-                    : offers.length > 0
+                  ? offers.length > 0
                     ? `${offers.length} order request${offers.length !== 1 ? "s" : ""} available`
                     : "Waiting for orders..."
                   : "Go online to receive orders"}
@@ -373,32 +391,20 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Active delivery card */}
-          {activeOrder && isOnline && (
-            <TouchableOpacity
-              style={styles.activeCard}
-              onPress={() =>
-                router.push({ pathname: "/delivery/[orderId]", params: { orderId: activeOrder.id } })
-              }
-              activeOpacity={0.7}
-            >
-              <View style={styles.activeCardInner}>
-                <View style={styles.activeCardRow}>
-                  <View style={styles.activeIconWrap}>
-                    <MaterialCommunityIcons name="truck-delivery" size={22} color={Colors.accent} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.activeCardTitle}>Active Delivery</Text>
-                    <Text style={styles.activeCardSub}>
-                      #{activeOrder.order_code} · ₹{activeOrder.total_amount}
-                    </Text>
-                  </View>
-                  <View style={styles.activeArrow}>
-                    <MaterialCommunityIcons name="chevron-right" size={22} color={Colors.accent} />
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
+          {/* Non-active status warning */}
+          {driverStatus && driverStatus !== "active" && (
+            <View style={styles.statusWarning}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={20} color={Colors.danger} />
+              <Text style={styles.statusWarningText}>
+                {driverStatus === "pending_verification"
+                  ? "Your account is under verification. You'll be able to go online once approved."
+                  : driverStatus === "suspended"
+                  ? "Your account has been suspended. Contact support for assistance."
+                  : driverStatus === "offboarded"
+                  ? "Your account is no longer active."
+                  : `Account status: ${driverStatus}. Contact support.`}
+              </Text>
+            </View>
           )}
 
           {/* Offer cards */}
@@ -717,4 +723,22 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { color: Colors.text, fontSize: 17, fontWeight: "700" },
   emptySub: { color: Colors.textMuted, fontSize: 14, marginTop: 6, textAlign: "center" },
+
+  statusWarning: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: Colors.danger + "15",
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.danger + "40",
+    padding: Spacing.md,
+  },
+  statusWarningText: {
+    color: Colors.danger,
+    fontSize: 13,
+    fontWeight: "500",
+    flex: 1,
+    lineHeight: 18,
+  },
 });
