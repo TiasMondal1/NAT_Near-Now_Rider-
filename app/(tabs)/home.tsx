@@ -15,10 +15,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
+import { createClient } from "@supabase/supabase-js";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
+import { SUPABASE_CONFIG } from "../../constants/config";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+
+const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
 type OfferStore = {
   store_id: string;
@@ -84,6 +88,7 @@ export default function HomeScreen() {
   const locationSub = useRef<Location.LocationSubscription | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -240,6 +245,45 @@ export default function HomeScreen() {
     };
   }, [isOnline, token, fetchOffers, fetchActiveOrder]);
 
+  // Realtime subscription: fire fetchOffers the instant a new offer row lands
+  // in driver_order_offers for this driver — no waiting for the next poll cycle.
+  useEffect(() => {
+    if (!isOnline || !token) {
+      realtimeChannelRef.current?.unsubscribe();
+      realtimeChannelRef.current = null;
+      return;
+    }
+
+    // We need the rider's user_id to filter. Grab it from the session.
+    getSession().then((session) => {
+      if (!session?.user?.id) return;
+      const driverId = session.user.id;
+
+      realtimeChannelRef.current = supabase
+        .channel(`offers:${driverId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "driver_order_offers",
+            filter: `driver_id=eq.${driverId}`,
+          },
+          () => {
+            // New offer just inserted — fetch immediately
+            fetchOffers();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          }
+        )
+        .subscribe();
+    });
+
+    return () => {
+      realtimeChannelRef.current?.unsubscribe();
+      realtimeChannelRef.current = null;
+    };
+  }, [isOnline, token, fetchOffers]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
     await Promise.all([fetchOffers(), fetchActiveOrder()]);
@@ -375,39 +419,45 @@ export default function HomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.accent} />
           }
         >
-          <View style={[styles.statusBanner, isOnline ? styles.bannerOnline : styles.bannerOffline]}>
-            <View style={[styles.bannerIcon, isOnline ? styles.bannerIconOnline : styles.bannerIconOffline]}>
-              <MaterialCommunityIcons
-                name={isOnline ? "truck-fast" : "power-standby"}
-                size={28}
-                color={isOnline ? Colors.accent : Colors.textMuted}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>{isOnline ? "You're Online" : "You're Offline"}</Text>
-              <Text style={styles.bannerSubtext}>
-                {isOnline
-                  ? offers.length > 0
-                    ? `${offers.length} order request${offers.length !== 1 ? "s" : ""} available`
-                    : "Waiting for orders..."
-                  : "Go online to receive orders"}
+          {isOnline && !activeOrder && offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length > 0 ? (
+            <View style={styles.bannerCompact}>
+              <Animated.View style={[styles.statusDot, { backgroundColor: Colors.online, transform: [{ scale: pulseAnim }] }]} />
+              <Text style={styles.bannerCompactText}>
+                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length} order request
+                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length !== 1 ? "s" : ""} available
               </Text>
             </View>
-            {!isOnline && (
-              <TouchableOpacity
-                style={[styles.goOnlineBtn, toggling && { opacity: 0.5 }]}
-                onPress={() => handleToggle(true)}
-                disabled={toggling}
-                activeOpacity={0.8}
-              >
-                {toggling ? (
-                  <ActivityIndicator size="small" color={Colors.accentText} />
-                ) : (
-                  <Text style={styles.goOnlineBtnText}>Go Online</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
+          ) : (
+            <View style={[styles.statusBanner, isOnline ? styles.bannerOnline : styles.bannerOffline]}>
+              <View style={[styles.bannerIcon, isOnline ? styles.bannerIconOnline : styles.bannerIconOffline]}>
+                <MaterialCommunityIcons
+                  name={isOnline ? "truck-fast" : "power-standby"}
+                  size={28}
+                  color={isOnline ? Colors.accent : Colors.textMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bannerTitle}>{isOnline ? "You're Online" : "You're Offline"}</Text>
+                <Text style={styles.bannerSubtext}>
+                  {isOnline ? "Waiting for orders..." : "Go online to receive orders"}
+                </Text>
+              </View>
+              {!isOnline && (
+                <TouchableOpacity
+                  style={[styles.goOnlineBtn, toggling && { opacity: 0.5 }]}
+                  onPress={() => handleToggle(true)}
+                  disabled={toggling}
+                  activeOpacity={0.8}
+                >
+                  {toggling ? (
+                    <ActivityIndicator size="small" color={Colors.accentText} />
+                  ) : (
+                    <Text style={styles.goOnlineBtnText}>Go Online</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {/* Non-active status warning */}
           {driverStatus && driverStatus !== "active" && (
@@ -452,10 +502,6 @@ export default function HomeScreen() {
           {/* Offer cards */}
           {isOnline && !activeOrder && offers.length > 0 && (
             <>
-              <Text style={styles.sectionTitle}>
-                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length} Order Request
-                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length !== 1 ? "s" : ""}
-              </Text>
               {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).map((offer) => {
                 const firstStore = offer.stores[0];
                 const d2store =
@@ -782,5 +828,22 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     flex: 1,
     lineHeight: 18,
+  },
+
+  bannerCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.accent + "30",
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  bannerCompactText: {
+    color: Colors.accent,
+    fontSize: 13,
+    fontWeight: "700",
   },
 });
