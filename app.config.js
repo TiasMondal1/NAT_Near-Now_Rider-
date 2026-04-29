@@ -30,9 +30,7 @@ module.exports = () => {
         },
       },
       android: {
-        adaptiveIcon: {
-          backgroundColor: "#000000",
-        },
+        icon: "./Rider_Logo_nearNow.png",
         edgeToEdgeEnabled: true,
         package: "com.nearandnow.delivery",
         config: {
