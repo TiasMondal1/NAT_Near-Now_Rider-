@@ -83,6 +83,7 @@ export default function HomeScreen() {
 
   const locationSub = useRef<Location.LocationSubscription | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -131,6 +132,7 @@ export default function HomeScreen() {
     return () => {
       locationSub.current?.remove();
       if (pollRef.current) clearInterval(pollRef.current);
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, []);
 
@@ -138,37 +140,45 @@ export default function HomeScreen() {
     if (!isOnline || !token) {
       locationSub.current?.remove();
       locationSub.current = null;
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
       return;
     }
+
+    const sendLocation = async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null) => {
+      try {
+        await apiFetch(
+          "/delivery-partner/location",
+          { method: "POST", body: { latitude: lat, longitude: lng, heading, speed, accuracy } },
+          token
+        );
+      } catch {}
+    };
 
     (async () => {
       locationSub.current = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.High, distanceInterval: 50, timeInterval: 10000 },
-        async (loc) => {
+        (loc) => {
           setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-          try {
-            await apiFetch(
-              "/delivery-partner/location",
-              {
-                method: "POST",
-                body: {
-                  latitude: loc.coords.latitude,
-                  longitude: loc.coords.longitude,
-                  heading: loc.coords.heading ?? null,
-                  speed: loc.coords.speed ?? null,
-                  accuracy: loc.coords.accuracy ?? null,
-                },
-              },
-              token
-            );
-          } catch {}
+          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
         }
       );
     })();
 
+    // Heartbeat: re-send last known position every 60 s so the dispatch system
+    // keeps seeing this driver even when they're stationary.
+    heartbeatRef.current = setInterval(async () => {
+      try {
+        const loc = await Location.getLastKnownPositionAsync();
+        if (loc) {
+          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+        }
+      } catch {}
+    }, 60000);
+
     return () => {
       locationSub.current?.remove();
       locationSub.current = null;
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     };
   }, [isOnline, token]);
 
@@ -207,19 +217,27 @@ export default function HomeScreen() {
   }, [token]);
 
   useEffect(() => {
-    if (!isOnline || !token) {
+    if (!token) return;
+
+    // Active orders must always be polled — a simulation or manual dispatch can
+    // assign an order even when the driver is marked offline in the app.
+    fetchActiveOrder();
+    const activeOrderInterval = setInterval(fetchActiveOrder, 6000);
+
+    if (!isOnline) {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = null;
       setOffers([]);
-      return;
+      return () => clearInterval(activeOrderInterval);
     }
+
     fetchOffers();
-    fetchActiveOrder();
-    pollRef.current = setInterval(() => {
-      fetchOffers();
-      fetchActiveOrder();
-    }, 6000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    pollRef.current = setInterval(fetchOffers, 6000);
+
+    return () => {
+      clearInterval(activeOrderInterval);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [isOnline, token, fetchOffers, fetchActiveOrder]);
 
   const handleRefresh = async () => {
@@ -405,6 +423,30 @@ export default function HomeScreen() {
                   : `Account status: ${driverStatus}. Contact support.`}
               </Text>
             </View>
+          )}
+
+          {/* Active order resumption card */}
+          {activeOrder && (
+            <TouchableOpacity
+              style={styles.activeCard}
+              onPress={() => router.push({ pathname: "/delivery/[orderId]", params: { orderId: activeOrder.id } })}
+              activeOpacity={0.85}
+            >
+              <View style={styles.activeCardInner}>
+                <View style={styles.activeCardRow}>
+                  <View style={styles.activeIconWrap}>
+                    <MaterialCommunityIcons name="truck-fast" size={24} color={Colors.accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activeCardTitle}>Active Delivery — #{activeOrder.order_code}</Text>
+                    <Text style={styles.activeCardSub} numberOfLines={1}>{activeOrder.delivery_address}</Text>
+                  </View>
+                  <View style={styles.activeArrow}>
+                    <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.accent} />
+                  </View>
+                </View>
+              </View>
+            </TouchableOpacity>
           )}
 
           {/* Offer cards */}
