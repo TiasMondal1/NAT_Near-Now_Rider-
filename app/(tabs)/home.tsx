@@ -10,6 +10,8 @@ import {
   Animated,
   ScrollView,
   RefreshControl,
+  AppState,
+  type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -151,6 +153,27 @@ export default function HomeScreen() {
     };
   }, []);
 
+  const sendLocation = useCallback(async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null) => {
+    if (!token) return;
+    try {
+      await apiFetch(
+        "/delivery-partner/location",
+        { method: "POST", body: { latitude: lat, longitude: lng, heading, speed, accuracy } },
+        token
+      );
+    } catch {}
+  }, [token]);
+
+  // Send last known location — used by heartbeat and AppState foreground handler
+  const sendLastKnownLocation = useCallback(async () => {
+    try {
+      const loc = await Location.getLastKnownPositionAsync();
+      if (loc) {
+        sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+      }
+    } catch {}
+  }, [sendLocation]);
+
   useEffect(() => {
     if (!isOnline || !token) {
       locationSub.current?.remove();
@@ -158,16 +181,6 @@ export default function HomeScreen() {
       if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
       return;
     }
-
-    const sendLocation = async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null) => {
-      try {
-        await apiFetch(
-          "/delivery-partner/location",
-          { method: "POST", body: { latitude: lat, longitude: lng, heading, speed, accuracy } },
-          token
-        );
-      } catch {}
-    };
 
     (async () => {
       locationSub.current = await Location.watchPositionAsync(
@@ -181,21 +194,14 @@ export default function HomeScreen() {
 
     // Heartbeat: re-send last known position every 60 s so the dispatch system
     // keeps seeing this driver even when they're stationary.
-    heartbeatRef.current = setInterval(async () => {
-      try {
-        const loc = await Location.getLastKnownPositionAsync();
-        if (loc) {
-          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
-        }
-      } catch {}
-    }, 60000);
+    heartbeatRef.current = setInterval(sendLastKnownLocation, 60000);
 
     return () => {
       locationSub.current?.remove();
       locationSub.current = null;
       if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     };
-  }, [isOnline, token]);
+  }, [isOnline, token, sendLocation, sendLastKnownLocation]);
 
   const fetchOffers = useCallback(async () => {
     if (!token) return;
@@ -232,6 +238,23 @@ export default function HomeScreen() {
       }
     } catch {}
   }, [token]);
+
+  // When the app comes back to foreground, immediately re-send location so the
+  // driver_locations record stays fresh (Android can freeze background location),
+  // then refresh offers in case new ones landed while the screen was off.
+  useEffect(() => {
+    if (!isOnline || !token) return;
+
+    const handleAppState = (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        sendLastKnownLocation();
+        fetchOffers();
+      }
+    };
+
+    const sub = AppState.addEventListener('change', handleAppState);
+    return () => sub.remove();
+  }, [isOnline, token, sendLastKnownLocation, fetchOffers]);
 
   useEffect(() => {
     if (!token) return;
@@ -311,25 +334,15 @@ export default function HomeScreen() {
     try {
       await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: value } }, token, 0);
       if (value) {
-        // Send current location immediately so the dispatch algorithm can see the rider
+        // Send current location immediately so the dispatch algorithm can see the rider.
+        // Fall back to last known position if getCurrentPositionAsync fails (GPS off, etc.)
         try {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-          await apiFetch(
-            "/delivery-partner/location",
-            {
-              method: "POST",
-              body: {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                heading: loc.coords.heading ?? null,
-                speed: loc.coords.speed ?? null,
-                accuracy: loc.coords.accuracy ?? null,
-              },
-            },
-            token
-          );
-        } catch {}
+          await sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+        } catch {
+          await sendLastKnownLocation();
+        }
         fetchOffers();
         fetchActiveOrder();
       }
