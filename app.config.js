@@ -1,3 +1,5 @@
+const withAbiSplits = require("./plugins/withAbiSplits");
+
 module.exports = () => {
   const googleMapsApiKey =
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
@@ -45,6 +47,7 @@ module.exports = () => {
       },
       plugins: [
         "expo-router",
+        withAbiSplits,
         [
           "expo-location",
           {
