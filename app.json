@@ -4,11 +4,14 @@
     "slug": "nearandnow-delivery",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./Rider_Logo_nearNow.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "backgroundColor": "#000000"
+    },
+    "web": {
+      "favicon": "./Rider_Logo_nearNow.png"
     },
     "ios": {
       "supportsTablet": false,
@@ -32,9 +35,6 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
       ]
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router"

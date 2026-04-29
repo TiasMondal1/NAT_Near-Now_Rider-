@@ -8,6 +8,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "prebuild:android": "npx expo prebuild --platform android",
+    "prebuild:ios": "npx expo prebuild --platform ios",
     "build:apk": "node scripts/build-apk-with-env.js",
     "build:aab": "node scripts/build-apk-with-env.js aab"
   },

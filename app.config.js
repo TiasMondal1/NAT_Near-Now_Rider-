@@ -11,7 +11,7 @@ module.exports = () => {
       scheme: "nearandnow-delivery",
       version: "1.0.0",
       orientation: "portrait",
-      icon: "./assets/icon.png",
+      icon: "./Rider_Logo_nearNow.png",
       userInterfaceStyle: "dark",
       newArchEnabled: true,
       splash: {
@@ -43,7 +43,7 @@ module.exports = () => {
         permissions: ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       },
       web: {
-        favicon: "./assets/favicon.png",
+        favicon: "./Rider_Logo_nearNow.png",
       },
       plugins: [
         "expo-router",
@@ -57,7 +57,7 @@ module.exports = () => {
         [
           "expo-notifications",
           {
-            icon: "./assets/notification-icon.png",
+            icon: "./Rider_Logo_nearNow.png",
             color: "#000000",
             defaultChannel: "orders",
           },
