@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -17,6 +18,8 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
 import { apiFetch } from "../constants/api";
 import { saveSession } from "../session";
+
+const OTP_LENGTH = 6;
 
 export default function OTPScreen() {
   const router = useRouter();
@@ -27,10 +30,11 @@ export default function OTPScreen() {
   const phone = params.phone;
   const flow = params.flow;
 
-  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
+  const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(60);
-  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -40,6 +44,9 @@ export default function OTPScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 8, useNativeDriver: true }),
     ]).start();
+    // Auto-focus so the keyboard + SMS banner appears immediately
+    const t = setTimeout(() => inputRef.current?.focus(), 400);
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -48,29 +55,27 @@ export default function OTPScreen() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const handleDigitChange = (text: string, index: number) => {
-    const newDigits = [...digits];
-    newDigits[index] = text;
-    setDigits(newDigits);
-    if (text && index < 5) {
-      inputRefs.current[index + 1]?.focus();
+  const handleChange = useCallback(
+    (text: string) => {
+      // Strip any non-digits (SMS autofill sometimes includes spaces/dashes)
+      const digits = text.replace(/\D/g, "").slice(0, OTP_LENGTH);
+      setValue(digits);
+    },
+    []
+  );
+
+  const otp = value;
+  const isComplete = otp.length === OTP_LENGTH;
+
+  // Auto-submit when all 6 digits are filled (autofill / paste)
+  useEffect(() => {
+    if (isComplete) {
+      handleVerify(otp);
     }
-  };
+  }, [isComplete, otp]);
 
-  const handleKeyPress = (key: string, index: number) => {
-    if (key === "Backspace" && !digits[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-      const newDigits = [...digits];
-      newDigits[index - 1] = "";
-      setDigits(newDigits);
-    }
-  };
-
-  const otp = digits.join("");
-  const isComplete = otp.length === 6;
-
-  const handleVerify = async () => {
-    if (!isComplete) return;
+  const handleVerify = async (code = otp) => {
+    if (code.length !== OTP_LENGTH) return;
     setLoading(true);
     try {
       const res = await apiFetch<{
@@ -88,7 +93,7 @@ export default function OTPScreen() {
         };
       }>("/api/auth/verify-otp", {
         method: "POST",
-        body: { phone, otp, role: "delivery_partner", name: "Delivery Partner" },
+        body: { phone, otp: code, role: "delivery_partner", name: "Delivery Partner" },
       });
 
       if (flow === "new") {
@@ -99,8 +104,6 @@ export default function OTPScreen() {
         return;
       }
 
-      // Same phone can exist for customer/shopkeeper/delivery_partner.
-      // This app only accepts the delivery_partner identity.
       if (res.token && res.user?.role === "delivery_partner") {
         await saveSession({
           token: res.token,
@@ -129,8 +132,8 @@ export default function OTPScreen() {
           ? "Too many attempts. Request a new code."
           : "Something went wrong. Try again."
       );
-      setDigits(["", "", "", "", "", ""]);
-      inputRefs.current[0]?.focus();
+      setValue("");
+      inputRef.current?.focus();
     } finally {
       setLoading(false);
     }
@@ -144,8 +147,8 @@ export default function OTPScreen() {
         body: { phone },
       });
       setCountdown(60);
-      setDigits(["", "", "", "", "", ""]);
-      inputRefs.current[0]?.focus();
+      setValue("");
+      inputRef.current?.focus();
     } catch {
       Alert.alert("Error", "Failed to resend code.");
     }
@@ -173,25 +176,48 @@ export default function OTPScreen() {
             <Text style={styles.phoneHighlight}>{phone}</Text>
           </Text>
 
-          <View style={styles.otpRow}>
-            {digits.map((digit, i) => (
-              <TextInput
-                key={i}
-                ref={(r) => { inputRefs.current[i] = r; }}
-                style={[styles.otpInput, digit ? styles.otpInputFilled : null]}
-                keyboardType="number-pad"
-                maxLength={1}
-                value={digit}
-                onChangeText={(t) => handleDigitChange(t, i)}
-                onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
-                autoFocus={i === 0}
-              />
-            ))}
-          </View>
+          {/* Tapping anywhere on the digit row focuses the hidden input */}
+          <Pressable onPress={() => inputRef.current?.focus()} style={styles.otpRow}>
+            {Array.from({ length: OTP_LENGTH }).map((_, i) => {
+              const char = otp[i] ?? "";
+              const isActive = focused && i === Math.min(otp.length, OTP_LENGTH - 1);
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.otpBox,
+                    char ? styles.otpBoxFilled : null,
+                    isActive ? styles.otpBoxActive : null,
+                  ]}
+                >
+                  <Text style={styles.otpChar}>{char}</Text>
+                  {isActive && !char ? <View style={styles.cursor} /> : null}
+                </View>
+              );
+            })}
+          </Pressable>
+
+          {/* Single hidden input — receives SMS autofill, paste, and keyboard input */}
+          <TextInput
+            ref={inputRef}
+            style={styles.hiddenInput}
+            value={otp}
+            onChangeText={handleChange}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            keyboardType="number-pad"
+            maxLength={OTP_LENGTH}
+            // iOS: triggers SMS OTP autofill banner
+            textContentType="oneTimeCode"
+            // Android: SMS autofill
+            autoComplete="sms-otp"
+            caretHidden
+            importantForAutofill="yes"
+          />
 
           <TouchableOpacity
             style={[styles.button, !isComplete && styles.buttonDisabled]}
-            onPress={handleVerify}
+            onPress={() => handleVerify()}
             disabled={!isComplete || loading}
             activeOpacity={0.8}
           >
@@ -263,21 +289,44 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: Spacing.xl,
   },
-  otpInput: {
+  otpBox: {
     width: 50,
     height: 58,
     backgroundColor: Colors.surface,
     borderWidth: 2,
     borderColor: Colors.border,
     borderRadius: BorderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  otpBoxFilled: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accentLight,
+  },
+  otpBoxActive: {
+    borderColor: Colors.accent,
+    borderWidth: 2.5,
+  },
+  otpChar: {
     color: Colors.text,
     fontSize: 24,
     fontWeight: "800",
     textAlign: "center",
   },
-  otpInputFilled: {
-    borderColor: Colors.accent,
-    backgroundColor: Colors.accentLight,
+  cursor: {
+    width: 2,
+    height: 24,
+    backgroundColor: Colors.accent,
+    borderRadius: 1,
+  },
+  // Positioned off-screen but still accessible to the OS autofill service
+  hiddenInput: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+    top: 0,
+    left: 0,
   },
   button: {
     backgroundColor: Colors.accent,
