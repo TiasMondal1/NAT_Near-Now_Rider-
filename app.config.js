@@ -17,6 +17,8 @@ module.exports = () => {
       userInterfaceStyle: "dark",
       newArchEnabled: true,
       splash: {
+        image: "./Rider_Logo_nearNow.png",
+        resizeMode: "contain",
         backgroundColor: "#000000",
       },
       ios: {
