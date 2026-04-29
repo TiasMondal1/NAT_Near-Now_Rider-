@@ -67,12 +67,13 @@ export default function OTPScreen() {
   const otp = value;
   const isComplete = otp.length === OTP_LENGTH;
 
-  // Auto-submit when all 6 digits are filled (autofill / paste)
+  // Auto-submit when all 6 digits are filled (autofill / paste).
+  // Guard with loading so a second render while the request is in-flight doesn't re-fire.
   useEffect(() => {
-    if (isComplete) {
+    if (isComplete && !loading) {
       handleVerify(otp);
     }
-  }, [isComplete, otp]);
+  }, [isComplete]);
 
   const handleVerify = async (code = otp) => {
     if (code.length !== OTP_LENGTH) return;
@@ -176,44 +177,49 @@ export default function OTPScreen() {
             <Text style={styles.phoneHighlight}>{phone}</Text>
           </Text>
 
-          {/* Tapping anywhere on the digit row focuses the hidden input */}
-          <Pressable onPress={() => inputRef.current?.focus()} style={styles.otpRow}>
-            {Array.from({ length: OTP_LENGTH }).map((_, i) => {
-              const char = otp[i] ?? "";
-              const isActive = focused && i === Math.min(otp.length, OTP_LENGTH - 1);
-              return (
-                <View
-                  key={i}
-                  style={[
-                    styles.otpBox,
-                    char ? styles.otpBoxFilled : null,
-                    isActive ? styles.otpBoxActive : null,
-                  ]}
-                >
-                  <Text style={styles.otpChar}>{char}</Text>
-                  {isActive && !char ? <View style={styles.cursor} /> : null}
-                </View>
-              );
-            })}
-          </Pressable>
+          {/* Digit boxes + hidden input share the same container so the
+              input covers the boxes and iOS autofill can find it. */}
+          <View style={styles.otpWrapper}>
+            <View style={styles.otpRow} pointerEvents="none">
+              {Array.from({ length: OTP_LENGTH }).map((_, i) => {
+                const char = otp[i] ?? "";
+                const isActive = focused && i === Math.min(otp.length, OTP_LENGTH - 1);
+                return (
+                  <View
+                    key={i}
+                    style={[
+                      styles.otpBox,
+                      char ? styles.otpBoxFilled : null,
+                      isActive ? styles.otpBoxActive : null,
+                    ]}
+                  >
+                    {char ? (
+                      <Text style={styles.otpChar}>{char}</Text>
+                    ) : isActive ? (
+                      <View style={styles.cursor} />
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
 
-          {/* Single hidden input — receives SMS autofill, paste, and keyboard input */}
-          <TextInput
-            ref={inputRef}
-            style={styles.hiddenInput}
-            value={otp}
-            onChangeText={handleChange}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            keyboardType="number-pad"
-            maxLength={OTP_LENGTH}
-            // iOS: triggers SMS OTP autofill banner
-            textContentType="oneTimeCode"
-            // Android: SMS autofill
-            autoComplete="sms-otp"
-            caretHidden
-            importantForAutofill="yes"
-          />
+            {/* Transparent input overlays the boxes — opacity:0.01 (not 0) so
+                iOS registers it for SMS autofill. */}
+            <TextInput
+              ref={inputRef}
+              style={styles.hiddenInput}
+              value={otp}
+              onChangeText={handleChange}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              keyboardType="number-pad"
+              maxLength={OTP_LENGTH}
+              textContentType="oneTimeCode"
+              autoComplete="sms-otp"
+              caretHidden
+              importantForAutofill="yes"
+            />
+          </View>
 
           <TouchableOpacity
             style={[styles.button, !isComplete && styles.buttonDisabled]}
@@ -283,11 +289,14 @@ const styles = StyleSheet.create({
     color: Colors.accent,
     fontWeight: "700",
   },
+  otpWrapper: {
+    marginBottom: Spacing.xl,
+    alignItems: "center",
+  },
   otpRow: {
     flexDirection: "row",
     justifyContent: "center",
     gap: 10,
-    marginBottom: Spacing.xl,
   },
   otpBox: {
     width: 50,
@@ -312,6 +321,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "800",
     textAlign: "center",
+    lineHeight: 30,
   },
   cursor: {
     width: 2,
@@ -319,14 +329,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent,
     borderRadius: 1,
   },
-  // Positioned off-screen but still accessible to the OS autofill service
+  // opacity:0.01 (not 0) — iOS autofill ignores fully-transparent inputs.
+  // Covers the entire digit row so touches focus the keyboard.
   hiddenInput: {
     position: "absolute",
-    width: 1,
-    height: 1,
-    opacity: 0,
     top: 0,
     left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.01,
+    color: "transparent",
   },
   button: {
     backgroundColor: Colors.accent,

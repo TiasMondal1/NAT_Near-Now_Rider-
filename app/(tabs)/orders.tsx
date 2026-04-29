@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import {
   View,
   Text,
@@ -32,6 +32,56 @@ const STATUS_CONFIG: Record<string, { label: string; icon: string; color: string
   en_route_delivery: { label: "Delivering", icon: "truck-delivery", color: Colors.warning, bg: Colors.warningLight },
   completed: { label: "Delivered", icon: "check-circle", color: Colors.success, bg: Colors.successLight },
 };
+
+function formatDate(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+const OrderCard = memo(function OrderCard({ item, onPress }: { item: Order; onPress: () => void }) {
+  const config = STATUS_CONFIG[item.status] || {
+    label: item.status, icon: "help-circle", color: Colors.textMuted, bg: Colors.surfaceLight,
+  };
+  const itemCount = item.order_items?.length || 0;
+
+  return (
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+      <View style={styles.cardTop}>
+        <View style={[styles.cardIconWrap, { backgroundColor: config.bg }]}>
+          <MaterialCommunityIcons name={config.icon as any} size={20} color={config.color} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.orderCode}>#{item.order_code || "---"}</Text>
+          <Text style={styles.storeName}>{item.stores?.name || "Store"}</Text>
+        </View>
+        <View style={styles.amountWrap}>
+          <Text style={styles.amountText}>{"₹"}{item.total_amount}</Text>
+        </View>
+      </View>
+
+      <View style={styles.cardMid}>
+        <MaterialCommunityIcons name="map-marker-outline" size={14} color={Colors.textMuted} />
+        <Text style={styles.address} numberOfLines={1}>{item.delivery_address}</Text>
+      </View>
+
+      <View style={styles.cardBottom}>
+        <View style={[styles.statusBadge, { borderColor: config.color, backgroundColor: config.bg }]}>
+          <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+        </View>
+        <View style={styles.metaRow}>
+          {itemCount > 0 && (
+            <Text style={styles.metaText}>{itemCount} item{itemCount > 1 ? "s" : ""}</Text>
+          )}
+          <Text style={styles.metaText}>{formatDate(item.placed_at)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.cardArrow}>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.textMuted} />
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -88,95 +138,12 @@ export default function OrdersScreen() {
     }, [token, tab, fetchOrders])
   );
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const renderOrder = ({ item, index }: { item: Order; index: number }) => {
-    const config = STATUS_CONFIG[item.status] || {
-      label: item.status,
-      icon: "help-circle",
-      color: Colors.textMuted,
-      bg: Colors.surfaceLight,
-    };
-    const itemCount = item.order_items?.length || 0;
-
-    return (
-      <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() =>
-            router.push({
-              pathname: "/delivery/[orderId]",
-              params: { orderId: item.id },
-            })
-          }
-          activeOpacity={0.7}
-        >
-          <View style={styles.cardTop}>
-            <View style={[styles.cardIconWrap, { backgroundColor: config.bg }]}>
-              <MaterialCommunityIcons
-                name={config.icon as any}
-                size={20}
-                color={config.color}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.orderCode}>#{item.order_code || "---"}</Text>
-              <Text style={styles.storeName}>
-                {item.stores?.name || "Store"}
-              </Text>
-            </View>
-            <View style={styles.amountWrap}>
-              <Text style={styles.amountText}>{"\u20B9"}{item.total_amount}</Text>
-            </View>
-          </View>
-
-          <View style={styles.cardMid}>
-            <MaterialCommunityIcons
-              name="map-marker-outline"
-              size={14}
-              color={Colors.textMuted}
-            />
-            <Text style={styles.address} numberOfLines={1}>
-              {item.delivery_address}
-            </Text>
-          </View>
-
-          <View style={styles.cardBottom}>
-            <View
-              style={[
-                styles.statusBadge,
-                { borderColor: config.color, backgroundColor: config.bg },
-              ]}
-            >
-              <Text style={[styles.statusText, { color: config.color }]}>
-                {config.label}
-              </Text>
-            </View>
-            <View style={styles.metaRow}>
-              {itemCount > 0 && (
-                <Text style={styles.metaText}>
-                  {itemCount} item{itemCount > 1 ? "s" : ""}
-                </Text>
-              )}
-              <Text style={styles.metaText}>{formatDate(item.placed_at)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.cardArrow}>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.textMuted} />
-          </View>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  };
+  const renderOrder = useCallback(({ item }: { item: Order }) => (
+    <OrderCard
+      item={item}
+      onPress={() => router.push({ pathname: "/delivery/[orderId]", params: { orderId: item.id } })}
+    />
+  ), [router]);
 
   return (
     <SafeAreaView style={styles.safe}>

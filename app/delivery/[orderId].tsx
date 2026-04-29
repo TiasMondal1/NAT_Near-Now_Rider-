@@ -250,7 +250,7 @@ export default function DeliveryScreen() {
 
   useEffect(() => {
     if (!token) return;
-    pollRef.current = setInterval(() => loadSequence(token, true), 6000);
+    pollRef.current = setInterval(() => loadSequence(token, true), 10000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [token]);
 
@@ -260,7 +260,8 @@ export default function DeliveryScreen() {
         const res = await apiFetch<{ order: ActiveOrder; stops: StoreStop[] }>(
           `/delivery-partner/orders/${orderId}/pickup-sequence`,
           {},
-          t
+          t,
+          silent ? 0 : 2  // no retries for background polls, keep retries for initial load
         );
         setOrder(res.order);
         setStops(res.stops);

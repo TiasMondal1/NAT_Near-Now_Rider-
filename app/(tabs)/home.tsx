@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -55,6 +55,11 @@ type ActiveOrder = {
   placed_at: string;
 };
 
+function formatTime(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
+
 function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
   const R = 6371,
     r = (d: number) => (d * Math.PI) / 180;
@@ -84,6 +89,11 @@ export default function HomeScreen() {
   const [token, setToken] = useState("");
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+
+  const visibleOffers = useMemo(
+    () => offers.filter((o) => !ignoredOfferIds.has(o.offer_id)),
+    [offers, ignoredOfferIds]
+  );
 
   const locationSub = useRef<Location.LocationSubscription | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -193,7 +203,8 @@ export default function HomeScreen() {
       const res = await apiFetch<{ success: boolean; offers: Offer[] }>(
         "/delivery-partner/available-orders",
         {},
-        token
+        token,
+        0   // no retries on polls — fail fast, next cycle will retry
       );
       if (res.success) {
         setIgnoredOfferIds((prev) => {
@@ -213,7 +224,8 @@ export default function HomeScreen() {
       const res = await apiFetch<{ success: boolean; orders: ActiveOrder[] }>(
         "/delivery-partner/orders?status=active",
         {},
-        token
+        token,
+        0   // no retries on polls
       );
       if (res.success) {
         setActiveOrder(res.orders?.[0] ?? null);
@@ -237,7 +249,8 @@ export default function HomeScreen() {
     }
 
     fetchOffers();
-    pollRef.current = setInterval(fetchOffers, 6000);
+    // 15s fallback poll — Realtime subscription handles instant delivery.
+    pollRef.current = setInterval(fetchOffers, 15000);
 
     return () => {
       clearInterval(activeOrderInterval);
@@ -353,11 +366,6 @@ export default function HomeScreen() {
   };
 
 
-  const formatTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  };
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -419,12 +427,12 @@ export default function HomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.accent} />
           }
         >
-          {isOnline && !activeOrder && offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length > 0 ? (
+          {isOnline && !activeOrder && visibleOffers.length > 0 ? (
             <View style={styles.bannerCompact}>
               <Animated.View style={[styles.statusDot, { backgroundColor: Colors.online, transform: [{ scale: pulseAnim }] }]} />
               <Text style={styles.bannerCompactText}>
-                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length} order request
-                {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length !== 1 ? "s" : ""} available
+                {visibleOffers.length} order request
+                {visibleOffers.length !== 1 ? "s" : ""} available
               </Text>
             </View>
           ) : (
@@ -500,9 +508,9 @@ export default function HomeScreen() {
           )}
 
           {/* Offer cards */}
-          {isOnline && !activeOrder && offers.length > 0 && (
+          {isOnline && !activeOrder && visibleOffers.length > 0 && (
             <>
-              {offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).map((offer) => {
+              {visibleOffers.map((offer) => {
                 const firstStore = offer.stores[0];
                 const d2store =
                   driverPos && firstStore
@@ -602,7 +610,7 @@ export default function HomeScreen() {
             </>
           )}
 
-          {isOnline && !activeOrder && offers.filter((o) => !ignoredOfferIds.has(o.offer_id)).length === 0 && (
+          {isOnline && !activeOrder && visibleOffers.length === 0 && (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
                 <MaterialCommunityIcons name="map-marker-check" size={40} color={Colors.accent} />

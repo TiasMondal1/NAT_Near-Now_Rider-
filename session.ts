@@ -14,20 +14,29 @@ export type UserSession = {
   };
 };
 
-export async function saveSession(session: UserSession) {
-  await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
-}
+// In-memory cache — eliminates AsyncStorage reads after the first load.
+// undefined = not yet loaded; null = loaded, no session.
+let _cache: UserSession | null | undefined = undefined;
 
 export async function getSession(): Promise<UserSession | null> {
+  if (_cache !== undefined) return _cache;
   const raw = await AsyncStorage.getItem(SESSION_KEY);
-  if (!raw) return null;
+  if (!raw) { _cache = null; return null; }
   try {
-    return JSON.parse(raw) as UserSession;
+    _cache = JSON.parse(raw) as UserSession;
+    return _cache;
   } catch {
+    _cache = null;
     return null;
   }
 }
 
+export async function saveSession(session: UserSession) {
+  _cache = session;
+  await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
 export async function clearSession() {
+  _cache = null;
   await AsyncStorage.removeItem(SESSION_KEY);
 }
