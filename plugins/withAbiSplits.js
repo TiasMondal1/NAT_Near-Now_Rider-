@@ -26,9 +26,9 @@ android.applicationVariants.all { variant ->
         def abiVersionCodes = ["armeabi-v7a": 1, "arm64-v8a": 2, "x86_64": 3]
         def abi = output.getFilter("ABI")
         if (abi != null) {
-            output.versionCodeOverride = defaultConfig.versionCode * 1000 + abiVersionCodes[abi]
+            output.versionCodeOverride = android.defaultConfig.versionCode * 1000 + abiVersionCodes[abi]
         } else {
-            output.versionCodeOverride = defaultConfig.versionCode * 1000
+            output.versionCodeOverride = android.defaultConfig.versionCode * 1000
         }
     }
 }`;
