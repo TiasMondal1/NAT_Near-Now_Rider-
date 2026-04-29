@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -23,18 +22,14 @@ const OTP_LENGTH = 6;
 
 export default function OTPScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{
-    phone: string;
-    flow?: "new" | "existing";
-  }>();
+  const params = useLocalSearchParams<{ phone: string; flow?: "new" | "existing" }>();
   const phone = params.phone;
   const flow = params.flow;
 
-  const [value, setValue] = useState("");
+  const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(""));
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(60);
-  const [focused, setFocused] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputsRef = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -44,9 +39,6 @@ export default function OTPScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 8, useNativeDriver: true }),
     ]).start();
-    // Auto-focus so the keyboard + SMS banner appears immediately
-    const t = setTimeout(() => inputRef.current?.focus(), 400);
-    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -55,28 +47,46 @@ export default function OTPScreen() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const handleChange = useCallback(
-    (text: string) => {
-      // Strip any non-digits (SMS autofill sometimes includes spaces/dashes)
-      const digits = text.replace(/\D/g, "").slice(0, OTP_LENGTH);
-      setValue(digits);
-    },
-    []
-  );
-
-  const otp = value;
+  const otp = digits.join("");
   const isComplete = otp.length === OTP_LENGTH;
 
-  // Auto-submit when all 6 digits are filled (autofill / paste).
-  // Guard with loading so a second render while the request is in-flight doesn't re-fire.
+  // Auto-submit when all 6 digits are filled (handles autofill + manual entry)
   useEffect(() => {
     if (isComplete && !loading) {
       handleVerify(otp);
     }
-  }, [isComplete]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otp]);
+
+  const handleDigitChange = (index: number, value: string) => {
+    const only = value.replace(/[^0-9]/g, "");
+
+    if (only.length > 1) {
+      // SMS autofill or paste — distribute across all boxes from position 0
+      const next = Array(OTP_LENGTH).fill("");
+      for (let i = 0; i < OTP_LENGTH; i++) next[i] = only[i] ?? "";
+      setDigits(next);
+      inputsRef.current[Math.min(only.length - 1, OTP_LENGTH - 1)]?.focus();
+      return;
+    }
+
+    const next = [...digits];
+    next[index] = only;
+    setDigits(next);
+
+    if (only && index < OTP_LENGTH - 1) {
+      inputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyPress = (index: number, key: string) => {
+    if (key === "Backspace" && !digits[index] && index > 0) {
+      inputsRef.current[index - 1]?.focus();
+    }
+  };
 
   const handleVerify = async (code = otp) => {
-    if (code.length !== OTP_LENGTH) return;
+    if (code.length !== OTP_LENGTH || loading) return;
     setLoading(true);
     try {
       const res = await apiFetch<{
@@ -98,28 +108,18 @@ export default function OTPScreen() {
       });
 
       if (flow === "new") {
-        router.replace({
-          pathname: "/signup",
-          params: { phone: res.phone || phone },
-        });
+        router.replace({ pathname: "/signup", params: { phone: res.phone || phone } });
         return;
       }
 
       if (res.token && res.user?.role === "delivery_partner") {
         await saveSession({
           token: res.token,
-          user: {
-            ...res.user,
-            role: "delivery_partner",
-            isActivated: res.user.isActivated ?? true,
-          },
+          user: { ...res.user, role: "delivery_partner", isActivated: res.user.isActivated ?? true },
         });
         router.replace("/(tabs)/home");
       } else if (res.mode === "signup" || !res.token || res.user?.role !== "delivery_partner") {
-        router.replace({
-          pathname: "/signup",
-          params: { phone: res.phone || phone },
-        });
+        router.replace({ pathname: "/signup", params: { phone: res.phone || phone } });
       }
     } catch (err: unknown) {
       const error = err as { error?: string };
@@ -133,8 +133,8 @@ export default function OTPScreen() {
           ? "Too many attempts. Request a new code."
           : "Something went wrong. Try again."
       );
-      setValue("");
-      inputRef.current?.focus();
+      setDigits(Array(OTP_LENGTH).fill(""));
+      inputsRef.current[0]?.focus();
     } finally {
       setLoading(false);
     }
@@ -148,8 +148,8 @@ export default function OTPScreen() {
         body: { phone },
       });
       setCountdown(60);
-      setValue("");
-      inputRef.current?.focus();
+      setDigits(Array(OTP_LENGTH).fill(""));
+      inputsRef.current[0]?.focus();
     } catch {
       Alert.alert("Error", "Failed to resend code.");
     }
@@ -177,48 +177,23 @@ export default function OTPScreen() {
             <Text style={styles.phoneHighlight}>{phone}</Text>
           </Text>
 
-          {/* Digit boxes + hidden input share the same container so the
-              input covers the boxes and iOS autofill can find it. */}
-          <View style={styles.otpWrapper}>
-            <View style={styles.otpRow} pointerEvents="none">
-              {Array.from({ length: OTP_LENGTH }).map((_, i) => {
-                const char = otp[i] ?? "";
-                const isActive = focused && i === Math.min(otp.length, OTP_LENGTH - 1);
-                return (
-                  <View
-                    key={i}
-                    style={[
-                      styles.otpBox,
-                      char ? styles.otpBoxFilled : null,
-                      isActive ? styles.otpBoxActive : null,
-                    ]}
-                  >
-                    {char ? (
-                      <Text style={styles.otpChar}>{char}</Text>
-                    ) : isActive ? (
-                      <View style={styles.cursor} />
-                    ) : null}
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Transparent input overlays the boxes — opacity:0.01 (not 0) so
-                iOS registers it for SMS autofill. */}
-            <TextInput
-              ref={inputRef}
-              style={styles.hiddenInput}
-              value={otp}
-              onChangeText={handleChange}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              keyboardType="number-pad"
-              maxLength={OTP_LENGTH}
-              textContentType="oneTimeCode"
-              autoComplete="sms-otp"
-              caretHidden
-              importantForAutofill="yes"
-            />
+          <View style={styles.otpRow}>
+            {digits.map((d, idx) => (
+              <TextInput
+                key={idx}
+                ref={(el) => { inputsRef.current[idx] = el; }}
+                style={[styles.otpInput, d ? styles.otpInputFilled : null]}
+                keyboardType="number-pad"
+                value={d}
+                onChangeText={(v) => handleDigitChange(idx, v)}
+                onKeyPress={({ nativeEvent }) => handleKeyPress(idx, nativeEvent.key)}
+                autoFocus={idx === 0}
+                textContentType="oneTimeCode"
+                autoComplete={idx === 0 ? "sms-otp" : "off"}
+                importantForAutofill={idx === 0 ? "yes" : "no"}
+                selectTextOnFocus
+              />
+            ))}
           </View>
 
           <TouchableOpacity
@@ -285,60 +260,32 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
     lineHeight: 22,
   },
-  phoneHighlight: {
-    color: Colors.accent,
-    fontWeight: "700",
-  },
-  otpWrapper: {
-    marginBottom: Spacing.xl,
-    alignItems: "center",
-  },
+  phoneHighlight: { color: Colors.accent, fontWeight: "700" },
   otpRow: {
     flexDirection: "row",
-    justifyContent: "center",
+    justifyContent: "space-between",
     gap: 10,
+    marginBottom: Spacing.xl,
   },
-  otpBox: {
-    width: 50,
+  otpInput: {
+    flex: 1,
     height: 58,
     backgroundColor: Colors.surface,
     borderWidth: 2,
     borderColor: Colors.border,
     borderRadius: BorderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  otpBoxFilled: {
-    borderColor: Colors.accent,
-    backgroundColor: Colors.accentLight,
-  },
-  otpBoxActive: {
-    borderColor: Colors.accent,
-    borderWidth: 2.5,
-  },
-  otpChar: {
-    color: Colors.text,
+    textAlign: "center",
     fontSize: 24,
     fontWeight: "800",
-    textAlign: "center",
-    lineHeight: 30,
+    color: Colors.text,
+    // Removes Android's extra font padding that shifts the cursor vertically
+    includeFontPadding: false,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
-  cursor: {
-    width: 2,
-    height: 24,
-    backgroundColor: Colors.accent,
-    borderRadius: 1,
-  },
-  // opacity:0.01 (not 0) — iOS autofill ignores fully-transparent inputs.
-  // Covers the entire digit row so touches focus the keyboard.
-  hiddenInput: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    opacity: 0.01,
-    color: "transparent",
+  otpInputFilled: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accentLight,
   },
   button: {
     backgroundColor: Colors.accent,
@@ -357,9 +304,5 @@ const styles = StyleSheet.create({
   resendRow: { alignItems: "center", marginTop: Spacing.lg },
   resendText: { color: Colors.textMuted, fontSize: 14 },
   timerText: { color: Colors.accent, fontWeight: "700" },
-  resendLink: {
-    color: Colors.accent,
-    fontSize: 15,
-    fontWeight: "700",
-  },
+  resendLink: { color: Colors.accent, fontSize: 15, fontWeight: "700" },
 });
