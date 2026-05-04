@@ -108,6 +108,14 @@ export default function OTPScreen() {
       });
 
       if (flow === "new") {
+        // Save the real auth token now so the session survives the signup step
+        // and the profile API calls in home.tsx use a valid bearer token.
+        if (res.token && res.user) {
+          await saveSession({
+            token: res.token,
+            user: { ...res.user, role: "delivery_partner", isActivated: res.user.isActivated ?? false },
+          });
+        }
         router.replace({ pathname: "/signup", params: { phone: res.phone || phone } });
         return;
       }

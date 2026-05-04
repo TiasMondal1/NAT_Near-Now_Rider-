@@ -11,6 +11,7 @@ import {
   ScrollView,
   RefreshControl,
   AppState,
+  Linking,
   type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -91,6 +92,9 @@ export default function HomeScreen() {
   const [token, setToken] = useState("");
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [verifiedBanner, setVerifiedBanner] = useState(false);
+  const verifiedBannerAnim = useRef(new Animated.Value(0)).current;
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const visibleOffers = useMemo(
     () => offers.filter((o) => !ignoredOfferIds.has(o.offer_id)),
@@ -152,6 +156,37 @@ export default function HomeScreen() {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, []);
+
+  // Poll for verification approval while pending — show in-app banner when approved
+  useEffect(() => {
+    if (driverStatus !== "pending_verification" || !token) {
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      return;
+    }
+
+    const checkVerification = async () => {
+      try {
+        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string } }>(
+          "/delivery-partner/profile", {}, token
+        );
+        const newStatus = profileRes.profile.status ?? "";
+        if (newStatus === "active") {
+          setDriverStatus("active");
+          setVerifiedBanner(true);
+          Animated.sequence([
+            Animated.timing(verifiedBannerAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+            Animated.delay(4000),
+            Animated.timing(verifiedBannerAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
+          ]).start(() => setVerifiedBanner(false));
+        }
+      } catch {}
+    };
+
+    statusPollRef.current = setInterval(checkVerification, 30000);
+    return () => {
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+    };
+  }, [driverStatus, token, verifiedBannerAnim]);
 
   const sendLocation = useCallback(async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null) => {
     if (!token) return;
@@ -463,7 +498,7 @@ export default function HomeScreen() {
                   {isOnline ? "Waiting for orders..." : "Go online to receive orders"}
                 </Text>
               </View>
-              {!isOnline && (
+              {!isOnline && driverStatus === "active" && (
                 <TouchableOpacity
                   style={[styles.goOnlineBtn, toggling && { opacity: 0.5 }]}
                   onPress={() => handleToggle(true)}
@@ -480,19 +515,49 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* Verification approved in-app banner */}
+          {verifiedBanner && (
+            <Animated.View style={[styles.verifiedBanner, { opacity: verifiedBannerAnim }]}>
+              <MaterialCommunityIcons name="check-circle" size={20} color="#fff" />
+              <Text style={styles.verifiedBannerText}>
+                Verification approved! You can now go online.
+              </Text>
+            </Animated.View>
+          )}
+
           {/* Non-active status warning */}
           {driverStatus && driverStatus !== "active" && (
             <View style={styles.statusWarning}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={20} color={Colors.danger} />
-              <Text style={styles.statusWarningText}>
-                {driverStatus === "pending_verification"
-                  ? "Your account is under verification. You'll be able to go online once approved."
-                  : driverStatus === "suspended"
-                  ? "Your account has been suspended. Contact support for assistance."
-                  : driverStatus === "offboarded"
-                  ? "Your account is no longer active."
-                  : `Account status: ${driverStatus}. Contact support.`}
-              </Text>
+              <MaterialCommunityIcons
+                name={driverStatus === "pending_verification" ? "clock-outline" : "alert-circle-outline"}
+                size={20}
+                color={Colors.danger}
+              />
+              <View style={{ flex: 1 }}>
+                {driverStatus === "pending_verification" ? (
+                  <>
+                    <Text style={styles.statusWarningText}>
+                      Your account is pending verification. Please connect to admin to get verified.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.adminContactBtn}
+                      onPress={() => Linking.openURL("tel:+919062692914")}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name="phone" size={14} color={Colors.accent} />
+                      <Text style={styles.adminContactText}>+91 9062692914</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <Text style={styles.statusWarningText}>
+                    {driverStatus === "suspended"
+                      ? "Your account has been suspended. Contact support for assistance."
+                      : driverStatus === "offboarded"
+                      ? "Your account is no longer active."
+                      : `Account status: ${driverStatus}. Contact support.`}
+                  </Text>
+                )}
+              </View>
             </View>
           )}
 
@@ -847,8 +912,37 @@ const styles = StyleSheet.create({
     color: Colors.danger,
     fontSize: 13,
     fontWeight: "500",
-    flex: 1,
     lineHeight: 18,
+  },
+  adminContactBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  adminContactText: {
+    color: Colors.accent,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  verifiedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.online,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+  },
+  verifiedBannerText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
   },
 
   bannerCompact: {

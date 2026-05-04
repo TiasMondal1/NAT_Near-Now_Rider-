@@ -17,7 +17,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { saveSession } from "../session";
+import { saveSession, getSession } from "../session";
 
 const DOC_TYPES = ["Aadhaar", "PAN", "Driving License"];
 type DeliveryPartnerListItem = {
@@ -96,18 +96,18 @@ export default function SignupScreen() {
           return candidate === normalizedPhoneDigits && !!p.profile;
         });
         if (ready?.profile) {
+          const existingSession = await getSession();
           await saveSession({
-            token: `delivery-existing-${Date.now()}`,
+            token: existingSession?.token ?? `delivery-existing-${Date.now()}`,
             user: {
               id: ready.id || ready.profile.user_id,
               name: ready.name || name.trim() || "Delivery Partner",
               role: "delivery_partner",
-              isActivated: true,
+              isActivated: existingSession?.user?.isActivated ?? false,
               phone: ready.phone || ready.profile.phone || normalizedPhone,
               email: ready.email || email.trim() || undefined,
             },
           });
-          Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
           router.replace("/(tabs)/home");
           return;
         }
@@ -142,18 +142,18 @@ export default function SignupScreen() {
         return;
       }
 
+      const existingSession = await getSession();
       await saveSession({
-        token: `delivery-signup-${Date.now()}`,
+        token: existingSession?.token ?? `delivery-signup-${Date.now()}`,
         user: {
           id: created.id || created.profile.user_id || normalizedPhone,
           name: created.name || name.trim() || "Delivery Partner",
           role: "delivery_partner",
-          isActivated: true,
+          isActivated: existingSession?.user?.isActivated ?? false,
           phone: created.phone || created.profile.phone || normalizedPhone,
           email: created.email || email.trim() || undefined,
         },
       });
-      Alert.alert("Signup complete", "Profile saved to delivery_partners. Welcome!");
       router.replace("/(tabs)/home");
     } catch (err: unknown) {
       const error = err as { error?: string; message?: string; status?: number };
