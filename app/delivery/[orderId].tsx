@@ -233,6 +233,10 @@ export default function DeliveryScreen() {
   const [loading, setLoading] = useState(true);
   const [delivering, setDelivering] = useState(false);
   const [token, setToken] = useState("");
+  const [deliveryOtp, setDeliveryOtp] = useState("");
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpErr, setOtpErr] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -299,6 +303,27 @@ export default function DeliveryScreen() {
         },
       },
     ]);
+  };
+
+  const verifyDeliveryOtp = async () => {
+    if (!/^\d{4}$/.test(deliveryOtp)) { setOtpErr("Enter the 4-digit OTP"); return; }
+    setOtpVerifying(true);
+    setOtpErr("");
+    try {
+      const res = await apiFetch<{ success: boolean }>(
+        `/delivery-partner/orders/${orderId}/verify-delivery-otp`,
+        { method: "POST", body: { otp: deliveryOtp } },
+        token
+      );
+      if (res.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setOtpVerified(true);
+      }
+    } catch (e: any) {
+      setOtpErr(e?.error || e?.message || "Incorrect OTP — ask customer to check their app");
+    } finally {
+      setOtpVerifying(false);
+    }
   };
 
   const openCustomerNav = () => {
@@ -396,15 +421,59 @@ export default function DeliveryScreen() {
                       <Text style={styles.deliveryAddr}>{order.customer_address}</Text>
                     </View>
                   </View>
+
+                  {/* Customer OTP verification — customer reads their OTP aloud, rider enters it */}
+                  {!otpVerified ? (
+                    <View style={styles.deliveryOtpBox}>
+                      <View style={styles.deliveryOtpRow}>
+                        <MaterialCommunityIcons name="shield-key-outline" size={16} color={Colors.accent} />
+                        <Text style={styles.deliveryOtpLabel}>Ask customer for their delivery OTP</Text>
+                      </View>
+                      <View style={styles.deliveryOtpInputRow}>
+                        <TextInput
+                          style={styles.deliveryOtpInput}
+                          value={deliveryOtp}
+                          onChangeText={(t) => { setDeliveryOtp(t.replace(/\D/g, "").slice(0, 4)); setOtpErr(""); }}
+                          keyboardType="number-pad"
+                          maxLength={4}
+                          placeholder="_ _ _ _"
+                          placeholderTextColor={Colors.textMuted}
+                          onSubmitEditing={verifyDeliveryOtp}
+                        />
+                        <TouchableOpacity
+                          style={[styles.verifyBtn, (otpVerifying || deliveryOtp.length !== 4) && styles.verifyBtnDisabled]}
+                          onPress={verifyDeliveryOtp}
+                          disabled={otpVerifying || deliveryOtp.length !== 4}
+                          activeOpacity={0.8}
+                        >
+                          {otpVerifying
+                            ? <ActivityIndicator color={Colors.accentText} size="small" />
+                            : <Text style={styles.verifyBtnText}>Verify</Text>}
+                        </TouchableOpacity>
+                      </View>
+                      {otpErr ? (
+                        <View style={styles.deliveryOtpErrRow}>
+                          <MaterialCommunityIcons name="alert-circle" size={14} color={Colors.danger} />
+                          <Text style={styles.deliveryOtpErrText}>{otpErr}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <View style={styles.deliveryOtpVerifiedRow}>
+                      <MaterialCommunityIcons name="shield-check" size={16} color={Colors.success} />
+                      <Text style={styles.deliveryOtpVerifiedText}>OTP verified — safe to deliver</Text>
+                    </View>
+                  )}
+
                   <View style={styles.deliveryActions}>
                     <TouchableOpacity style={styles.navBtn} onPress={openCustomerNav} activeOpacity={0.8}>
                       <MaterialCommunityIcons name="navigation-variant" size={16} color={Colors.accent} />
                       <Text style={styles.navBtnText}>Navigate</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.primaryBtn, styles.primaryBtnFlex, delivering && styles.primaryBtnDisabled]}
+                      style={[styles.primaryBtn, styles.primaryBtnFlex, (!otpVerified || delivering) && styles.primaryBtnDisabled]}
                       onPress={markDelivered}
-                      disabled={delivering}
+                      disabled={!otpVerified || delivering}
                       activeOpacity={0.8}
                     >
                       {delivering ? (
@@ -634,7 +703,44 @@ const styles = StyleSheet.create({
   },
   deliveryTitle: { color: Colors.text, fontSize: 16, fontWeight: "700" },
   deliveryAddr: { color: Colors.textSecondary, fontSize: 13, marginTop: 2, lineHeight: 18 },
-  deliveryActions: { flexDirection: "row", gap: Spacing.sm },
+  deliveryOtpBox: {
+    marginTop: Spacing.md,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.accentLight + "22",
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    gap: Spacing.xs,
+  },
+  deliveryOtpRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  deliveryOtpLabel: { color: Colors.text, fontSize: 13, fontWeight: "700" },
+  deliveryOtpInputRow: { flexDirection: "row", gap: Spacing.sm, marginTop: 4 },
+  deliveryOtpInput: {
+    flex: 1,
+    height: 46,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    color: Colors.text,
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: 8,
+    textAlign: "center",
+  },
+  deliveryOtpErrRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
+  deliveryOtpErrText: { color: Colors.danger, fontSize: 12 },
+  deliveryOtpVerifiedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: Spacing.md,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.success + "18",
+  },
+  deliveryOtpVerifiedText: { color: Colors.success, fontSize: 13, fontWeight: "700" },
+  deliveryActions: { flexDirection: "row", gap: Spacing.sm, marginTop: Spacing.md },
   navBtn: {
     flexDirection: "row",
     alignItems: "center",
