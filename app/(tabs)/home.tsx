@@ -632,17 +632,28 @@ export default function HomeScreen() {
                     )}
 
                     <View style={styles.offerStoreList}>
-                      {offer.stores.map((s) => (
-                        <View key={s.store_id} style={styles.offerStoreRow}>
-                          <View style={styles.offerStoreSeq}>
-                            <Text style={styles.offerStoreSeqText}>{s.sequence_number}</Text>
+                      {offer.stores.map((s) => {
+                        const dist = driverPos
+                          ? fmtDist(haversineKm(driverPos.lat, driverPos.lng, s.latitude, s.longitude))
+                          : null;
+                        return (
+                          <View key={s.store_id} style={styles.offerStoreRow}>
+                            <View style={styles.offerStoreSeq}>
+                              <Text style={styles.offerStoreSeqText}>{s.sequence_number}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.offerStoreName}>{s.name || "Store"}</Text>
+                              <Text style={styles.offerStoreAddr} numberOfLines={1}>{s.address}</Text>
+                            </View>
+                            {dist && (
+                              <View style={styles.offerStoreDistBadge}>
+                                <MaterialCommunityIcons name="map-marker-distance" size={11} color={Colors.accent} />
+                                <Text style={styles.offerStoreDistText}>{dist}</Text>
+                              </View>
+                            )}
                           </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.offerStoreName}>{s.name || "Store"}</Text>
-                            <Text style={styles.offerStoreAddr} numberOfLines={1}>{s.address}</Text>
-                          </View>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
 
                     <View style={styles.offerDropRow}>
@@ -842,6 +853,17 @@ const styles = StyleSheet.create({
   offerStoreSeqText: { color: Colors.accent, fontSize: 11, fontWeight: "700" },
   offerStoreName: { color: Colors.text, fontSize: 14, fontWeight: "600" },
   offerStoreAddr: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
+  offerStoreDistBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    flexShrink: 0,
+  },
+  offerStoreDistText: { color: Colors.accent, fontSize: 11, fontWeight: "700" },
   offerDropRow: {
     flexDirection: "row",
     alignItems: "flex-start",

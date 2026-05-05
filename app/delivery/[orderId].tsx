@@ -16,10 +16,22 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+
+function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
+  const R = 6371, r = (d: number) => (d * Math.PI) / 180;
+  const dL = r(lt2 - lt1), dG = r(lg2 - lg1);
+  const a = Math.sin(dL / 2) ** 2 + Math.cos(r(lt1)) * Math.cos(r(lt2)) * Math.sin(dG / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function fmtDist(d: number) {
+  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
+}
 
 type StoreStop = {
   allocation_id: string;
@@ -57,12 +69,16 @@ function PickupStopCard({
   token,
   isNext,
   onDone,
+  driverLat,
+  driverLng,
 }: {
   stop: StoreStop;
   orderId: string;
   token: string;
   isNext: boolean;
   onDone: () => void;
+  driverLat: number | null;
+  driverLng: number | null;
 }) {
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
@@ -140,6 +156,14 @@ function PickupStopCard({
           <Text style={styles.stopStoreAddr} numberOfLines={1}>
             {stop.store.address}
           </Text>
+          {driverLat != null && driverLng != null && (
+            <View style={styles.stopDistBadge}>
+              <MaterialCommunityIcons name="map-marker-distance" size={11} color={Colors.accent} />
+              <Text style={styles.stopDistText}>
+                {fmtDist(haversineKm(driverLat, driverLng, stop.store.latitude, stop.store.longitude))} away
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.stopHeaderActions}>
@@ -238,7 +262,10 @@ export default function DeliveryScreen() {
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpErr, setOtpErr] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [driverLat, setDriverLat] = useState<number | null>(null);
+  const [driverLng, setDriverLng] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const locationSubRef = useRef<Location.LocationSubscription | null>(null);
   const slideAnim = useRef(new Animated.Value(30)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -249,7 +276,23 @@ export default function DeliveryScreen() {
       setToken(session.token);
       await loadSequence(session.token);
     })();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      locationSubRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
+        (loc) => {
+          setDriverLat(loc.coords.latitude);
+          setDriverLng(loc.coords.longitude);
+        }
+      );
+    })();
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      locationSubRef.current?.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -407,6 +450,8 @@ export default function DeliveryScreen() {
                   token={token}
                   isNext={!order.all_picked_up && i === nextIdx}
                   onDone={() => loadSequence(token, true)}
+                  driverLat={driverLat}
+                  driverLng={driverLng}
                 />
               ))}
 
@@ -419,6 +464,14 @@ export default function DeliveryScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.deliveryTitle}>Deliver to Customer</Text>
                       <Text style={styles.deliveryAddr}>{order.customer_address}</Text>
+                      {driverLat != null && driverLng != null && (
+                        <View style={styles.stopDistBadge}>
+                          <MaterialCommunityIcons name="map-marker-distance" size={11} color={Colors.accent} />
+                          <Text style={styles.stopDistText}>
+                            {fmtDist(haversineKm(driverLat, driverLng, order.customer_lat, order.customer_lng))} away
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </View>
 
@@ -586,6 +639,18 @@ const styles = StyleSheet.create({
 
   stopStoreName: { color: Colors.text, fontSize: 14, fontWeight: "700" },
   stopStoreAddr: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
+  stopDistBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginTop: 4,
+    alignSelf: "flex-start",
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  stopDistText: { color: Colors.accent, fontSize: 11, fontWeight: "700" },
 
   stopHeaderActions: { flexDirection: "row", gap: 6 },
   stopIconBtn: {
