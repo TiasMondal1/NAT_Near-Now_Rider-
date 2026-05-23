@@ -4,7 +4,7 @@ const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
 
 const normalizeUrl = (value: string) => value.replace(/\/+$/, "");
 
-const defaultApiBase = "https://near-and-now-frontend.vercel.app";
+const defaultApiBase = "https://near-and-now-backend.vercel.app";
 
 // API Configuration
 export const API_CONFIG = {

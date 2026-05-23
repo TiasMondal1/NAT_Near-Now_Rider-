@@ -69,7 +69,7 @@ module.exports = () => {
       extra: {
         apiBaseUrl:
           process.env.EXPO_PUBLIC_API_BASE_URL ||
-          "https://near-and-now-frontend.vercel.app",
+          "https://near-and-now-backend.vercel.app",
         apiProxyTarget: process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3000",
         supabaseUrl:
           process.env.EXPO_PUBLIC_SUPABASE_URL ||
