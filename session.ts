@@ -2,8 +2,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const SESSION_KEY = "nearandnow_delivery_session";
 
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 export type UserSession = {
   token: string;
+  expiresAt: number; // Unix ms timestamp
   user: {
     id: string;
     name: string;
@@ -23,7 +26,12 @@ export async function getSession(): Promise<UserSession | null> {
   const raw = await AsyncStorage.getItem(SESSION_KEY);
   if (!raw) { _cache = null; return null; }
   try {
-    _cache = JSON.parse(raw) as UserSession;
+    const session = JSON.parse(raw) as UserSession;
+    if (session.expiresAt && Date.now() > session.expiresAt) {
+      await clearSession();
+      return null;
+    }
+    _cache = session;
     return _cache;
   } catch {
     _cache = null;
@@ -31,9 +39,13 @@ export async function getSession(): Promise<UserSession | null> {
   }
 }
 
-export async function saveSession(session: UserSession) {
-  _cache = session;
-  await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
+export async function saveSession(session: Omit<UserSession, 'expiresAt'> & { expiresAt?: number }) {
+  const withExpiry: UserSession = {
+    ...session,
+    expiresAt: session.expiresAt ?? Date.now() + SESSION_TTL_MS,
+  };
+  _cache = withExpiry;
+  await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(withExpiry));
 }
 
 export async function clearSession() {
