@@ -21,6 +21,10 @@ web-build/
 *.mobileprovision
 *.keystore
 
+# Signing credentials (release keystore + passwords) — NEVER commit these
+/credentials/
+keystore.properties
+
 # Debug
 *.log
 

@@ -1,4 +1,5 @@
 const withAbiSplits = require("./plugins/withAbiSplits");
+const withReleaseBuild = require("./plugins/withReleaseBuild");
 
 module.exports = () => {
   const googleMapsApiKey =
@@ -50,6 +51,7 @@ module.exports = () => {
       plugins: [
         "expo-router",
         withAbiSplits,
+        withReleaseBuild,
         [
           "expo-location",
           {
