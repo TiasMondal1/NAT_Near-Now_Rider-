@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Colors, Spacing, BorderRadius } from "../../constants/theme";
+import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession, clearSession, UserSession } from "../../session";
 
@@ -269,6 +269,7 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <View style={styles.responsiveWrap}>
       <Animated.View style={[styles.headerRow, { opacity: fadeAnim }]}>
         <Text style={styles.header}>Profile</Text>
         {!editing ? (
@@ -442,6 +443,7 @@ export default function ProfileScreen() {
           <Text style={styles.version}>Near & Now v1.0.0</Text>
         </Animated.View>
       </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -479,6 +481,7 @@ function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly,
 }
 
 const styles = StyleSheet.create({
+  responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   safe: { flex: 1, backgroundColor: Colors.bg },
   centered: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm },

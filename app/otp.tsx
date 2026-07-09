@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Colors, Spacing, BorderRadius } from "../constants/theme";
+import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
 import { saveSession } from "../session";
 
@@ -236,7 +236,7 @@ export default function OTPScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
-  container: { flex: 1, paddingHorizontal: Spacing.lg },
+  container: { flex: 1, paddingHorizontal: Spacing.lg, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   backBtn: {
     marginTop: Spacing.md,
     width: 44,

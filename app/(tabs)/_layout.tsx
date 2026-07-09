@@ -1,10 +1,14 @@
 import { Tabs } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { View, Platform } from "react-native";
+import { View, Platform, useWindowDimensions } from "react-native";
 import { Colors } from "../../constants/theme";
 import OfflineBanner from "../../components/OfflineBanner";
 
 export default function TabLayout() {
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const iconSize = isTablet ? 28 : 24;
+
   return (
     <View style={{ flex: 1 }}>
       <OfflineBanner />
@@ -14,7 +18,7 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: Colors.bg,
           borderTopWidth: 0,
-          height: Platform.OS === "ios" ? 88 : 68,
+          height: (Platform.OS === "ios" ? 88 : 68) + (isTablet ? 12 : 0),
           paddingBottom: Platform.OS === "ios" ? 28 : 10,
           paddingTop: 10,
           elevation: 0,
@@ -26,7 +30,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: Colors.accent,
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: isTablet ? 13 : 11,
           fontWeight: "600",
           letterSpacing: 0.3,
         },
@@ -43,7 +47,7 @@ export default function TabLayout() {
             <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
               <MaterialCommunityIcons
                 name={focused ? "map-marker-radius" : "map-marker-radius-outline"}
-                size={24}
+                size={iconSize}
                 color={color}
               />
             </View>
@@ -58,7 +62,7 @@ export default function TabLayout() {
             <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
               <MaterialCommunityIcons
                 name={focused ? "clipboard-list" : "clipboard-list-outline"}
-                size={24}
+                size={iconSize}
                 color={color}
               />
             </View>
@@ -73,7 +77,7 @@ export default function TabLayout() {
             <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
               <MaterialCommunityIcons
                 name={focused ? "wallet" : "wallet-outline"}
-                size={24}
+                size={iconSize}
                 color={color}
               />
             </View>
@@ -88,7 +92,7 @@ export default function TabLayout() {
             <View style={focused ? { transform: [{ scale: 1.1 }] } : undefined}>
               <MaterialCommunityIcons
                 name={focused ? "account-circle" : "account-circle-outline"}
-                size={24}
+                size={iconSize}
                 color={color}
               />
             </View>

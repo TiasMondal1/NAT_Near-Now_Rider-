@@ -20,7 +20,7 @@ import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { createClient } from "@supabase/supabase-js";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Colors, Spacing, BorderRadius } from "../../constants/theme";
+import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { SUPABASE_CONFIG } from "../../constants/config";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
@@ -719,7 +719,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
   loadingContainer: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
-  content: { flex: 1 },
+  content: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
 
   header: {
     flexDirection: "row",

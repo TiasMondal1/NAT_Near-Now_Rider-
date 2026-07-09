@@ -50,7 +50,8 @@
     "typescript": "~5.9.2"
   },
   "overrides": {
-    "chromium-edge-launcher": "0.3.0"
+    "chromium-edge-launcher": "0.3.0",
+    "react-native": "0.81.5"
   },
   "private": true
 }

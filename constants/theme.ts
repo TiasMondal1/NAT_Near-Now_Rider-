@@ -39,3 +39,7 @@ export const BorderRadius = {
   xl: 24,
   round: 9999,
 };
+
+// Caps content width on tablets/large screens so single-column layouts
+// don't stretch edge-to-edge; phones (width below this) are unaffected.
+export const MAX_CONTENT_WIDTH = 640;

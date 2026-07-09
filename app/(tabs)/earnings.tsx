@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Colors, Spacing, BorderRadius } from "../../constants/theme";
+import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 
@@ -120,6 +120,7 @@ export default function EarningsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <View style={styles.responsiveWrap}>
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <Text style={styles.header}>Earnings</Text>
 
@@ -242,11 +243,13 @@ export default function EarningsScreen() {
           </View>
         }
       />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,

@@ -18,7 +18,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Colors, Spacing, BorderRadius } from "../../constants/theme";
+import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 
@@ -392,6 +392,7 @@ export default function DeliveryScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <View style={styles.responsiveWrap}>
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
@@ -553,11 +554,13 @@ export default function DeliveryScreen() {
           <View style={{ height: 32 }} />
         </ScrollView>
       </Animated.View>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   safe: { flex: 1, backgroundColor: Colors.bg },
   centered: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
 
