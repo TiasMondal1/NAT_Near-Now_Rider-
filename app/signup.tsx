@@ -17,16 +17,9 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { saveSession, getSession } from "../session";
+import { saveSession } from "../session";
 
 const DOC_TYPES = ["Aadhaar", "PAN", "Driving License"];
-type DeliveryPartnerListItem = {
-  id: string;
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  profile?: { user_id: string; phone?: string | null } | null;
-};
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -49,109 +42,43 @@ export default function SignupScreen() {
   const isValid = name.trim().length >= 2;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const normalizedPhone = String(phone || "").trim();
-  const normalizedPhoneDigits = normalizedPhone.replace(/\D/g, "");
-
-  const byPhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
-
-  const upsertExistingPartnerProfile = async (partnerId: string) => {
-    await apiFetch(`/api/delivery/partners/${partnerId}`, {
-      method: "PUT",
-      body: {
-        name: name.trim() || "Delivery Partner",
-        email: email.trim() || undefined,
-        phone: normalizedPhone,
-        address: address.trim() || undefined,
-        vehicle_number: vehicleNumber.trim() || undefined,
-        verification_document: docType,
-        verification_number: docNumber.trim() || undefined,
-        status: "pending_verification",
-      },
-    });
-  };
 
   const handleSignup = async () => {
     if (!isValid) return;
     setLoading(true);
     try {
-      // 1) Pre-check: if app_user already exists for this phone, repair/create profile first.
-      let preList: DeliveryPartnerListItem[] = [];
-      try {
-        preList = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-      } catch {
-        preList = [];
-      }
-      const existing = preList.find((p) => {
-        const candidate = byPhone(p.phone || p.profile?.phone);
-        return candidate === normalizedPhoneDigits;
-      });
-
-      if (existing?.id) {
-        if (!existing.profile) {
-          await upsertExistingPartnerProfile(existing.id);
-        }
-
-        const refreshed = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-        const ready = refreshed.find((p) => {
-          const candidate = byPhone(p.phone || p.profile?.phone);
-          return candidate === normalizedPhoneDigits && !!p.profile;
-        });
-        if (ready?.profile) {
-          const existingSession = await getSession();
-          await saveSession({
-            token: existingSession?.token ?? `delivery-existing-${Date.now()}`,
-            user: {
-              id: ready.id || ready.profile.user_id,
-              name: ready.name || name.trim() || "Delivery Partner",
-              role: "delivery_partner",
-              isActivated: existingSession?.user?.isActivated ?? false,
-              phone: ready.phone || ready.profile.phone || normalizedPhone,
-              email: ready.email || email.trim() || undefined,
-            },
-          });
-          router.replace("/(tabs)/home");
-          return;
-        }
-      }
-
-      // 2) Create new partner only if not found above.
-      await apiFetch("/api/delivery/partners", {
+      const res = await apiFetch<{
+        success: boolean;
+        error?: string;
+        token?: string;
+        user?: { id: string; name?: string; phone?: string; email?: string };
+      }>("/delivery-partner/signup/complete", {
         method: "POST",
         body: {
           phone: normalizedPhone,
           name: name.trim(),
           email: email.trim() || undefined,
           address: address.trim() || undefined,
-          vehicle_number: vehicleNumber.trim() || undefined,
-          verification_document: docType,
-          verification_number: docNumber.trim() || undefined,
-          status: "pending_verification",
+          vehicleNumber: vehicleNumber.trim() || undefined,
+          verificationDocument: docType,
+          verificationNumber: docNumber.trim() || undefined,
         },
       });
 
-      const postCreateList = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-      const created = postCreateList.find((p) => {
-        const candidate = byPhone(p.phone || p.profile?.phone);
-        return candidate === normalizedPhoneDigits && !!p.profile;
-      });
-
-      if (!created?.profile) {
-        Alert.alert(
-          "Signup incomplete",
-          "Could not confirm delivery_partners profile creation. Please try again."
-        );
+      if (!res.success || !res.token || !res.user) {
+        Alert.alert("Signup Failed", res.error || "Could not complete registration. Please try again.");
         return;
       }
 
-      const existingSession = await getSession();
       await saveSession({
-        token: existingSession?.token ?? `delivery-signup-${Date.now()}`,
+        token: res.token,
         user: {
-          id: created.id || created.profile.user_id || normalizedPhone,
-          name: created.name || name.trim() || "Delivery Partner",
+          id: res.user.id,
+          name: res.user.name || name.trim() || "Delivery Partner",
           role: "delivery_partner",
-          isActivated: existingSession?.user?.isActivated ?? false,
-          phone: created.phone || created.profile.phone || normalizedPhone,
-          email: created.email || email.trim() || undefined,
+          isActivated: false,
+          phone: res.user.phone || normalizedPhone,
+          email: res.user.email || email.trim() || undefined,
         },
       });
       router.replace("/(tabs)/home");

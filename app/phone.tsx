@@ -17,14 +17,6 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
 
-type DeliveryPartnerListItem = {
-  id: string;
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  profile?: { user_id: string; phone?: string | null } | null;
-};
-
 export default function PhoneScreen() {
   const router = useRouter();
   const [phone, setPhone] = useState("");
@@ -50,37 +42,10 @@ export default function PhoneScreen() {
   const fullPhone = `+91${phone.replace(/\s/g, "")}`;
   const disabled = !isValid || checkingExisting || registering;
 
-  const normalizePhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
-
-  const findByPhone = (partners: DeliveryPartnerListItem[], targetPhone: string) => {
-    const target = normalizePhone(targetPhone);
-    return partners.find((p) => {
-      const appUserPhone = normalizePhone(p.phone);
-      const profilePhone = normalizePhone(p.profile?.phone);
-      return appUserPhone === target || profilePhone === target;
-    });
-  };
-
   const handleExistingUser = async () => {
     if (!isValid) return;
     setCheckingExisting(true);
     try {
-      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-      const match = findByPhone(partners, fullPhone);
-
-      if (!match) {
-        Alert.alert(
-          "User not found",
-          "No delivery partner account found for this phone. Please use New User Registration."
-        );
-        return;
-      }
-
-      if (!match.profile) {
-        router.push({ pathname: "/signup", params: { phone: fullPhone } });
-        return;
-      }
-
       const res = await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
         method: "POST",
         body: { phone: fullPhone },
@@ -89,10 +54,12 @@ export default function PhoneScreen() {
         Alert.alert("Error", "Unable to send OTP right now. Please try again.");
         return;
       }
+      // verify-otp resolves login vs. "no account yet" by (phone, role) — otp.tsx
+      // routes to signup automatically if this phone has no delivery_partner account.
       router.push({ pathname: "/otp", params: { phone: fullPhone, flow: "existing" } });
     } catch (err: unknown) {
       const error = err as { message?: string };
-      Alert.alert("Error", error?.message || "Unable to validate existing user right now.");
+      Alert.alert("Error", error?.message || "Unable to send OTP right now.");
     } finally {
       setCheckingExisting(false);
     }
