@@ -9,8 +9,16 @@ const { withAppBuildGradle } = require("@expo/config-plugins");
 
 const SPLITS_BLOCK = `
     splits {
+        // ABI-split APKs are incompatible with bundleRelease in this AGP version:
+        // both tasks share the resource-shrinking intermediates dir, and having
+        // 4 shrunk-resource variants (universal + 3 ABIs) present makes
+        // buildReleasePreBundle fail with "Multiple shrunk-resources files found"
+        // (see https://issuetracker.google.com/402800800). Disable splits whenever
+        // a bundle task is part of this invocation so bundleRelease stays a plain,
+        // unsplit build; assembleRelease (run separately) still gets full ABI splits.
+        def isBundleBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
         abi {
-            enable true
+            enable !isBundleBuild
             reset()
             include "arm64-v8a", "armeabi-v7a", "x86_64"
             universalApk true
