@@ -75,6 +75,7 @@ export default function RootLayout() {
             importance: Notifications!.AndroidImportance.MAX,
             vibrationPattern: [0, 250, 250, 250],
             lightColor: Colors.accent,
+            sound: "order_chime.wav",
           });
         }
 
