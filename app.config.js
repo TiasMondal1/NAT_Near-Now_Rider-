@@ -38,7 +38,7 @@ module.exports = () => {
       android: {
         icon: "./Rider_Logo_nearNow.png",
         edgeToEdgeEnabled: true,
-        package: "com.nearandnow.delivery",
+        package: "com.nearandnow.rider",
         config: {
           googleMaps: {
             apiKey: googleMapsApiKey,
