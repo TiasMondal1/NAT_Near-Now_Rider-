@@ -70,7 +70,10 @@ export default function RootLayout() {
         if (finalStatus !== "granted") return;
 
         if (Platform.OS === "android") {
-          await Notifications!.setNotificationChannelAsync("orders", {
+          // Channel id bumped to _v2: Android locks a channel's sound at
+          // creation time, so a previously-created "orders" channel can never
+          // pick up order_chime.wav — only a new channel id does.
+          await Notifications!.setNotificationChannelAsync("orders_v2", {
             name: "Order Alerts",
             importance: Notifications!.AndroidImportance.MAX,
             vibrationPattern: [0, 250, 250, 250],

@@ -66,7 +66,7 @@ module.exports = () => {
           {
             icon: "./Rider_Logo_nearNow.png",
             color: "#000000",
-            defaultChannel: "orders",
+            defaultChannel: "orders_v2",
             sounds: ["./assets/sounds/order_chime.wav"],
           },
         ],
