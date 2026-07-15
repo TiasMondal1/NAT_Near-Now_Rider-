@@ -7,10 +7,13 @@
  */
 const { withAppBuildGradle } = require("@expo/config-plugins");
 
+// ABI APK splits are incompatible with bundleRelease (Play AAB). Enable only for APK builds.
 const SPLITS_BLOCK = `
+    // Disabled automatically during bundle* tasks so AAB builds succeed.
+    def isBuildingBundle = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
     splits {
         abi {
-            enable true
+            enable !isBuildingBundle
             reset()
             include "arm64-v8a", "armeabi-v7a", "x86_64"
             universalApk true
@@ -59,6 +62,19 @@ function insertAfterAndroidResourcesBlock(contents, toInsert) {
 module.exports = function withAbiSplits(config) {
   return withAppBuildGradle(config, (mod) => {
     let contents = mod.modResults.contents;
+
+    // Upgrade older "enable true" splits so AAB builds keep working after prebuild.
+    if (contents.includes("splits {") && !contents.includes("isBuildingBundle")) {
+      contents = contents.replace(
+        /splits \{\s*abi \{\s*enable true/,
+        `def isBuildingBundle = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
+    splits {
+        abi {
+            enable !isBuildingBundle`
+      );
+      mod.modResults.contents = contents;
+      return mod;
+    }
 
     // ── Idempotent: skip if already patched ──────────────────────────────────
     if (contents.includes("splits {")) return mod;
