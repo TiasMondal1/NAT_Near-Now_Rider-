@@ -346,6 +346,24 @@ export default function HomeScreen() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           }
         )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "driver_order_offers",
+            filter: `driver_id=eq.${driverId}`,
+          },
+          (payload) => {
+            // Another driver won the order (or this one expired for another reason)
+            // — drop it from the list immediately instead of waiting up to 15s for
+            // the next poll, so a driver can't tap Accept on an order that's gone.
+            const updated = payload.new as { id: string; status: string };
+            if (updated.status !== "pending") {
+              setOffers((prev) => prev.filter((o) => o.offer_id !== updated.id));
+            }
+          }
+        )
         .subscribe();
     });
 
