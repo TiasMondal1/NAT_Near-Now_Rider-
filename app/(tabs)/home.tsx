@@ -93,8 +93,10 @@ export default function HomeScreen() {
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [verifiedBanner, setVerifiedBanner] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const verifiedBannerAnim = useRef(new Animated.Value(0)).current;
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notificationsPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const visibleOffers = useMemo(
     () => offers.filter((o) => !ignoredOfferIds.has(o.offer_id)),
@@ -124,6 +126,29 @@ export default function HomeScreen() {
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchUnreadCount = async () => {
+      try {
+        const data = await apiFetch<{ is_read: boolean }[]>(
+          "/delivery-partner/notifications?unreadOnly=true",
+          {},
+          token
+        );
+        setUnreadNotifications(Array.isArray(data) ? data.length : 0);
+      } catch {
+        // Non-critical — leave the badge count as-is on failure
+      }
+    };
+
+    fetchUnreadCount();
+    notificationsPollRef.current = setInterval(fetchUnreadCount, 30000);
+    return () => {
+      if (notificationsPollRef.current) clearInterval(notificationsPollRef.current);
+    };
+  }, [token]);
 
   useEffect(() => {
     (async () => {
@@ -457,6 +482,20 @@ export default function HomeScreen() {
             </Text>
           </View>
           <View style={styles.headerRight}>
+            <TouchableOpacity
+              style={styles.bellBtn}
+              onPress={() => router.push("/notifications")}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="bell-outline" size={22} color={Colors.textMuted} />
+              {unreadNotifications > 0 && (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>
+                    {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
             <View style={styles.statusChip}>
               {toggling ? (
                 <ActivityIndicator size="small" color={Colors.textMuted} style={{ width: 8, height: 8 }} />
@@ -752,6 +791,20 @@ const styles = StyleSheet.create({
   greetingSub: { color: Colors.textMuted, fontSize: 13, fontWeight: "500", marginBottom: 2 },
   greeting: { color: Colors.text, fontSize: 22, fontWeight: "800" },
   headerRight: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
+  bellBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  bellBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
   statusChip: {
     flexDirection: "row",
     alignItems: "center",
