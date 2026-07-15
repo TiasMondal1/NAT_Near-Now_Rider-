@@ -1,9 +1,12 @@
 /**
- * Expo config plugin — declares Android large-screen / tablet support so
- * Play Console does not treat the app as phone-only.
+ * Expo config plugin — declares full large-screen/tablet support in the
+ * generated AndroidManifest.xml after every `expo prebuild --clean`.
  *
- * Adds <supports-screens> for all sizes and marks the main activity as
- * resizable. Survives `expo prebuild --clean`.
+ * Without this, expo prebuild's default manifest omits <supports-screens>,
+ * which is normally fine, but Play Console's tablet-compatibility check also
+ * wants an explicit, non-required touchscreen feature so devices without a
+ * touchscreen (tablets used with mouse/keyboard, Chromebooks) aren't filtered
+ * out of the tablet listing.
  */
 const {
   withAndroidManifest,
@@ -27,6 +30,25 @@ function ensureSupportsScreens(manifest) {
   return manifest;
 }
 
+function ensureOptionalHardwareFeatures(manifest) {
+  const usesFeature = manifest.manifest["uses-feature"] || [];
+  const addNotRequired = (name) => {
+    if (usesFeature.some((f) => f?.$?.["android:name"] === name)) return;
+    usesFeature.push({
+      $: { "android:name": name, "android:required": "false" },
+    });
+  };
+  // The locked `android:screenOrientation="portrait"` on MainActivity makes
+  // the build tools imply a *required* android.hardware.screen.portrait
+  // feature, which the Play Store uses to filter out landscape-primary
+  // tablets/Chromebooks/foldables. Override it to not-required so the app
+  // stays portrait-locked in the UI without excluding those devices.
+  addNotRequired("android.hardware.touchscreen");
+  addNotRequired("android.hardware.screen.portrait");
+  manifest.manifest["uses-feature"] = usesFeature;
+  return manifest;
+}
+
 function ensureResizableMainActivity(manifest) {
   const app = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest);
   const activities = app.activity || [];
@@ -37,7 +59,12 @@ function ensureResizableMainActivity(manifest) {
       activity.$["android:resizeableActivity"] = "true";
       // Keep portrait as default UX but allow size/density changes on tablets.
       const configChanges = activity.$["android:configChanges"] || "";
-      const required = ["screenSize", "screenLayout", "smallestScreenSize", "density"];
+      const required = [
+        "screenSize",
+        "screenLayout",
+        "smallestScreenSize",
+        "density",
+      ];
       const parts = new Set(
         configChanges
           .split("|")
@@ -54,6 +81,7 @@ function ensureResizableMainActivity(manifest) {
 module.exports = function withTabletSupport(config) {
   return withAndroidManifest(config, (mod) => {
     mod.modResults = ensureSupportsScreens(mod.modResults);
+    mod.modResults = ensureOptionalHardwareFeatures(mod.modResults);
     mod.modResults = ensureResizableMainActivity(mod.modResults);
     return mod;
   });

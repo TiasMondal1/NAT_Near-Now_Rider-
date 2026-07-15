@@ -7,13 +7,19 @@
  */
 const { withAppBuildGradle } = require("@expo/config-plugins");
 
-// ABI APK splits are incompatible with bundleRelease (Play AAB). Enable only for APK builds.
+// ABI-split APKs are incompatible with bundleRelease in this AGP version:
+// both tasks share the resource-shrinking intermediates dir, and having
+// 4 shrunk-resource variants (universal + 3 ABIs) present makes
+// buildReleasePreBundle fail with "Multiple shrunk-resources files found"
+// (see https://issuetracker.google.com/402800800). Disable splits whenever
+// a bundle task is part of this invocation so bundleRelease stays a plain,
+// unsplit build; assembleRelease (run separately) still gets full ABI splits.
 const SPLITS_BLOCK = `
-    // Disabled automatically during bundle* tasks so AAB builds succeed.
-    def isBuildingBundle = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
     splits {
+        // Disable ABI splits during bundle* tasks so AAB builds succeed.
+        def isBundleBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
         abi {
-            enable !isBuildingBundle
+            enable !isBundleBuild
             reset()
             include "arm64-v8a", "armeabi-v7a", "x86_64"
             universalApk true
@@ -64,13 +70,17 @@ module.exports = function withAbiSplits(config) {
     let contents = mod.modResults.contents;
 
     // Upgrade older "enable true" splits so AAB builds keep working after prebuild.
-    if (contents.includes("splits {") && !contents.includes("isBuildingBundle")) {
+    if (
+      contents.includes("splits {") &&
+      !contents.includes("isBundleBuild") &&
+      !contents.includes("isBuildingBundle")
+    ) {
       contents = contents.replace(
         /splits \{\s*abi \{\s*enable true/,
-        `def isBuildingBundle = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
-    splits {
+        `splits {
+        def isBundleBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
         abi {
-            enable !isBuildingBundle`
+            enable !isBundleBuild`
       );
       mod.modResults.contents = contents;
       return mod;
