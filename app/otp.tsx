@@ -94,6 +94,7 @@ export default function OTPScreen() {
         mode?: string;
         token?: string;
         phone?: string;
+        signupTicket?: string;
         user?: {
           id: string;
           name: string;
@@ -116,7 +117,7 @@ export default function OTPScreen() {
             user: { ...res.user, role: "delivery_partner", isActivated: res.user.isActivated ?? false },
           });
         }
-        router.replace({ pathname: "/signup", params: { phone: res.phone || phone } });
+        router.replace({ pathname: "/signup", params: { phone: res.phone || phone, signupTicket: res.signupTicket || "" } });
         return;
       }
 
@@ -127,7 +128,7 @@ export default function OTPScreen() {
         });
         router.replace("/(tabs)/home");
       } else if (res.mode === "signup" || !res.token || res.user?.role !== "delivery_partner") {
-        router.replace({ pathname: "/signup", params: { phone: res.phone || phone } });
+        router.replace({ pathname: "/signup", params: { phone: res.phone || phone, signupTicket: res.signupTicket || "" } });
       }
     } catch (err: unknown) {
       const error = err as { error?: string };

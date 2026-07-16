@@ -23,7 +23,7 @@ const DOC_TYPES = ["Aadhaar", "PAN", "Driving License"];
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const { phone, signupTicket } = useLocalSearchParams<{ phone: string; signupTicket?: string }>();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,6 +56,7 @@ export default function SignupScreen() {
         method: "POST",
         body: {
           phone: normalizedPhone,
+          signupTicket,
           name: name.trim(),
           email: email.trim() || undefined,
           address: address.trim() || undefined,
