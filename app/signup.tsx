@@ -17,7 +17,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { getSession, saveSession } from "../session";
+import { clearSession, getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 
 export default function SignupScreen() {
@@ -50,6 +50,11 @@ export default function SignupScreen() {
   const isValid = name.trim().length >= 2;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const normalizedPhone = String(phone || "").trim();
+
+  const handleGoBack = async () => {
+    await clearSession();
+    router.replace("/phone");
+  };
 
   const handleSignup = async () => {
     if (!isValid) return;
@@ -203,6 +208,10 @@ export default function SignupScreen() {
                 </View>
               )}
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.backRow} onPress={handleGoBack} disabled={loading}>
+              <Text style={styles.backText}>Go back</Text>
+            </TouchableOpacity>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -310,4 +319,6 @@ const styles = StyleSheet.create({
   buttonText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
   inputError: { borderColor: Colors.danger, borderWidth: 1.5 },
   errorHint: { color: Colors.danger, fontSize: 12, marginTop: 4, marginLeft: 2 },
+  backRow: { alignItems: "center", marginTop: Spacing.lg },
+  backText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
 });
