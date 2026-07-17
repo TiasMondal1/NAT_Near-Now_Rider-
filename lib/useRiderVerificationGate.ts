@@ -5,9 +5,9 @@ import { getSession } from "../session";
 import {
   checkRiderVerification,
   isRiderVerified,
-  type RiderDocuments,
   type RiderVerificationProfile,
 } from "./riderVerification";
+import type { VerificationDocument } from "./riderVerificationDocuments";
 
 type GateMode = "require-verified" | "require-pending";
 
@@ -20,7 +20,7 @@ const POLL_INTERVAL_MS = 30_000;
 export function useRiderVerificationGate(mode: GateMode) {
   const [checking, setChecking] = useState(true);
   const [profile, setProfile] = useState<RiderVerificationProfile | null>(null);
-  const [documents, setDocuments] = useState<RiderDocuments | null>(null);
+  const [documents, setDocuments] = useState<VerificationDocument[]>([]);
   const [documentsUploaded, setDocumentsUploaded] = useState(false);
   const [verified, setVerified] = useState(false);
 

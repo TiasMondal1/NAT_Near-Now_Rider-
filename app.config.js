@@ -10,7 +10,7 @@ module.exports = () => {
 
   return {
     expo: {
-      name: "nearandnow-delivery",
+      name: "Near & Now Delivery Partner",
       slug: "nearandnow-delivery",
       scheme: "nearandnow-delivery",
       version: "1.0.0",

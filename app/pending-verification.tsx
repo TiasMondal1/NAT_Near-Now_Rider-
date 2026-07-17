@@ -17,6 +17,7 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/t
 import { clearSession, getSession } from "../session";
 import { checkRiderVerification } from "../lib/riderVerification";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
+import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
@@ -24,9 +25,19 @@ const STEPS = [
   { key: "live", label: "Start delivering", icon: "truck-fast-outline" as const },
 ];
 
+const DOC_LABELS: Record<RequiredDocKey, string> = {
+  aadhaar_front: "Aadhaar Card (Front)",
+  aadhaar_back: "Aadhaar Card (Back)",
+  pan_front: "PAN Card (Front)",
+  pan_back: "PAN Card (Back)",
+  driving_license_front: "Driving License (Front)",
+  driving_license_back: "Driving License (Back)",
+  vehicle_registration: "Vehicle Registration (RC)",
+};
+
 export default function PendingVerificationScreen() {
   const router = useRouter();
-  const { checking, profile, documentsUploaded } = useRiderVerificationGate("require-pending");
+  const { checking, profile, documents, documentsUploaded } = useRiderVerificationGate("require-pending");
   const [refreshing, setRefreshing] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -104,6 +115,13 @@ export default function PendingVerificationScreen() {
   const status = profile?.status || "pending_verification";
   const isSuspended = status === "suspended" || status === "offboarded";
 
+  const requiredKeys = REQUIRED_DOC_KEYS.filter(
+    (key) => key !== "vehicle_registration" || isVehicleRegistrationRequired(profile?.vehicle_type)
+  );
+  const uploadedCount = documents.filter((d) => requiredKeys.includes(d.doc_type) && !!d.url).length;
+  const docsComplete = uploadedCount >= requiredKeys.length;
+  const rejectedDocs = documents.filter((d) => requiredKeys.includes(d.doc_type) && d.status === "rejected");
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
@@ -169,7 +187,7 @@ export default function PendingVerificationScreen() {
                         </Text>
                         {active && step.key === "upload" && (
                           <Text style={styles.stepHint}>
-                            Upload Aadhaar, PAN and vehicle details
+                            Upload Aadhaar, PAN, Driving License and vehicle details
                           </Text>
                         )}
                         {active && step.key === "review" && (
@@ -184,10 +202,27 @@ export default function PendingVerificationScreen() {
               </View>
 
               <View style={styles.docsCard}>
-                <Text style={styles.sectionTitle}>Required documents</Text>
+                <View style={styles.docsHeader}>
+                  <Text style={styles.sectionTitle}>Required documents</Text>
+                  <View style={[styles.countBadge, docsComplete && styles.countBadgeDone]}>
+                    <Text style={[styles.countText, docsComplete && styles.countTextDone]}>
+                      {uploadedCount}/{requiredKeys.length}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={styles.docsDesc}>
-                  Upload Aadhaar card, PAN card, and bike registration (or leave registration as null for cycle / EV scooty).
+                  Upload Aadhaar (front &amp; back), PAN (front &amp; back), Driving License (front &amp; back), and Vehicle Registration — Vehicle Registration isn't required for cycles or e-bikes.
                 </Text>
+
+                {rejectedDocs.map((doc) => (
+                  <View key={doc.doc_type} style={styles.rejectionRow}>
+                    <MaterialCommunityIcons name="close-circle" size={15} color={Colors.danger} />
+                    <Text style={styles.rejectionRowText}>
+                      {DOC_LABELS[doc.doc_type]} needs to be re-uploaded
+                      {doc.rejection_reason ? ` — ${doc.rejection_reason}` : ""}
+                    </Text>
+                  </View>
+                ))}
 
                 <TouchableOpacity
                   style={styles.primaryBtn}
@@ -196,7 +231,7 @@ export default function PendingVerificationScreen() {
                 >
                   <MaterialCommunityIcons name="cloud-upload-outline" size={18} color="#fff" />
                   <Text style={styles.primaryBtnText}>
-                    {hasSubmittedDocs ? "Review / Re-upload Documents" : "Upload Documents"}
+                    {docsComplete ? "Review Uploaded Documents" : "Upload Documents"}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -317,13 +352,34 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     marginBottom: Spacing.md,
   },
+  docsHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  countBadge: {
+    backgroundColor: Colors.warning + "22",
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  countBadgeDone: { backgroundColor: Colors.success + "22" },
+  countText: { color: Colors.warning, fontSize: 12, fontWeight: "700" },
+  countTextDone: { color: Colors.success },
   docsDesc: {
     color: Colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
     marginBottom: Spacing.lg,
-    marginTop: -8,
   },
+  rejectionRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    backgroundColor: Colors.dangerLight,
+    borderWidth: 1,
+    borderColor: Colors.danger + "30",
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  rejectionRowText: { color: Colors.danger, fontSize: 12, fontWeight: "600", flex: 1, lineHeight: 16 },
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",

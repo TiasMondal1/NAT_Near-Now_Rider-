@@ -1,10 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,308 +16,533 @@ import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { getSession, saveSession } from "../session";
-import { uploadRiderDocuments, type PickedDocument, type VehicleType } from "../lib/riderDocuments";
+import {
+  DOC_NUMBER_FORMATS,
+  DOC_NUMBER_LENGTHS,
+  deleteVerificationDocument,
+  docNumberErrorMessage,
+  fetchVerificationDocuments,
+  formatPickedFileSize,
+  isVehicleRegistrationRequired,
+  saveVerificationDocument,
+  updateVehicleType,
+  validateDocNumber,
+  type PickedDocFile,
+  type RequiredDocKey,
+  type VehicleType,
+  type VerificationDocument,
+} from "../lib/riderVerificationDocuments";
+import { fetchRiderProfile } from "../lib/riderVerification";
 
-type DocumentKind = "aadhaar" | "pan";
-
-const VEHICLES: { value: VehicleType; label: string; icon: string }[] = [
-  { value: "bike", label: "Bike", icon: "motorbike" },
+const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
   { value: "cycle", label: "Cycle", icon: "bike" },
-  { value: "ev_scooty", label: "EV Scooty", icon: "scooter-electric" },
+  { value: "e-bike", label: "E-Bike", icon: "bicycle-electric" },
+  { value: "bike", label: "Bike", icon: "motorbike" },
+  { value: "scooty", label: "Scooty", icon: "scooter" },
+];
+
+const DOCUMENT_SECTIONS = [
+  { key: "aadhaar_front", label: "Aadhaar Card (Front)", icon: "card-account-details-outline" as const, placeholder: "12-digit Aadhaar number", hasNumber: true },
+  { key: "aadhaar_back", label: "Aadhaar Card (Back)", icon: "card-account-details-outline" as const, placeholder: "", hasNumber: false },
+  { key: "pan_front", label: "PAN Card (Front)", icon: "card-outline" as const, placeholder: "10-character PAN, e.g. ABCDE1234F", hasNumber: true },
+  { key: "pan_back", label: "PAN Card (Back)", icon: "card-outline" as const, placeholder: "", hasNumber: false },
+  { key: "driving_license_front", label: "Driving License (Front)", icon: "card-text-outline" as const, placeholder: "Driving license number", hasNumber: true },
+  { key: "driving_license_back", label: "Driving License (Back)", icon: "card-text-outline" as const, placeholder: "", hasNumber: false },
+  { key: "vehicle_registration", label: "Vehicle Registration (RC)", icon: "file-document-outline" as const, placeholder: "Vehicle registration number", hasNumber: true },
+] as const;
+
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+const FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP · Max size 5MB";
+
+type DocKey = RequiredDocKey;
+type DocsState = Record<DocKey, VerificationDocument | null>;
+
+const SECTION_BY_KEY = Object.fromEntries(
+  DOCUMENT_SECTIONS.map((s) => [s.key, s])
+) as Record<DocKey, (typeof DOCUMENT_SECTIONS)[number]>;
+
+const EMPTY_DOCS = (): DocsState =>
+  Object.fromEntries(DOCUMENT_SECTIONS.map((d) => [d.key, null])) as DocsState;
+
+function extFromMime(mime: string): string {
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  return "jpg";
+}
+
+/**
+ * Aadhaar and PAN each combine their front/back keys into one card (shared
+ * header, one Document Number field from the front side). Driving License
+ * does the same. Vehicle Registration is a single-key group, only shown when
+ * the selected vehicle type actually requires it (bike/scooty).
+ */
+type DocGroup = {
+  groupKey: string;
+  headerLabel: string;
+  headerIcon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  numberKey: DocKey | null;
+  members: readonly DocKey[];
+};
+
+const ALL_GROUPS: DocGroup[] = [
+  { groupKey: "aadhaar", headerLabel: "Aadhaar Card", headerIcon: "card-account-details-outline", numberKey: "aadhaar_front", members: ["aadhaar_front", "aadhaar_back"] },
+  { groupKey: "pan", headerLabel: "PAN Card", headerIcon: "card-outline", numberKey: "pan_front", members: ["pan_front", "pan_back"] },
+  { groupKey: "driving_license", headerLabel: "Driving License", headerIcon: "card-text-outline", numberKey: "driving_license_front", members: ["driving_license_front", "driving_license_back"] },
+  { groupKey: "vehicle_registration", headerLabel: "Vehicle Registration (RC)", headerIcon: "file-document-outline", numberKey: "vehicle_registration", members: ["vehicle_registration"] },
 ];
 
 export default function DocumentsScreen() {
   const router = useRouter();
-  const [aadhaar, setAadhaar] = useState<PickedDocument | null>(null);
-  const [pan, setPan] = useState<PickedDocument | null>(null);
-  const [vehicleType, setVehicleType] = useState<VehicleType>("bike");
-  const [registrationNumber, setRegistrationNumber] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
+  const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
+  const [serverDocs, setServerDocs] = useState<DocsState>(EMPTY_DOCS());
+  const [numbers, setNumbers] = useState<Record<DocKey, string>>(
+    () => Object.fromEntries(DOCUMENT_SECTIONS.map((d) => [d.key, ""])) as Record<DocKey, string>
+  );
+  const [pendingFiles, setPendingFiles] = useState<Partial<Record<DocKey, PickedDocFile>>>({});
+  const [savingKey, setSavingKey] = useState<DocKey | null>(null);
   const [saving, setSaving] = useState(false);
+  const suspendedRef = useRef(false);
 
-  const pickDocument = async (kind: DocumentKind) => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (permission.status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to upload your documents.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      quality: 0.45,
-      base64: true,
-    });
-
-    const asset = result.canceled ? null : result.assets?.[0];
-    if (!asset?.uri) return;
-    if (!asset.base64) {
-      Alert.alert("Could not read image", "Please try another photo of your document.");
-      return;
-    }
-
-    const document: PickedDocument = {
-      uri: asset.uri,
-      base64: asset.base64,
-      mimeType: asset.mimeType || "image/jpeg",
-    };
-    if (kind === "aadhaar") setAadhaar(document);
-    else setPan(document);
-  };
-
-  const selectVehicle = (value: VehicleType) => {
-    setVehicleType(value);
-    if (value !== "bike") setRegistrationNumber("");
-  };
-
-  const handleSubmit = async () => {
-    if (!aadhaar || !pan) {
-      Alert.alert("Documents required", "Please upload both your Aadhaar card and PAN card.");
-      return;
-    }
-    if (vehicleType === "bike" && !registrationNumber.trim()) {
-      Alert.alert("Registration required", "Please enter your bike registration number.");
-      return;
-    }
-
-    setSaving(true);
-    try {
+  useEffect(() => {
+    (async () => {
       const session = await getSession();
       if (!session?.token) {
-        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/phone");
         return;
       }
+      setToken(session.token);
+      try {
+        const [profile, docs] = await Promise.all([
+          fetchRiderProfile(session.token),
+          fetchVerificationDocuments(session.token),
+        ]);
+        setVehicleType((profile?.vehicle_type as VehicleType | null) ?? null);
+        const next = EMPTY_DOCS();
+        const nextNumbers = { ...numbers };
+        for (const doc of docs) {
+          next[doc.doc_type] = doc;
+          nextNumbers[doc.doc_type] = doc.number ?? "";
+        }
+        setServerDocs(next);
+        setNumbers(nextNumbers);
+      } catch {
+        /* non-fatal — screen still renders with empty state */
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      await uploadRiderDocuments({
-        token: session.token,
-        aadhaar,
-        pan,
-        vehicleType,
-        registrationNumber:
-          vehicleType === "bike" ? registrationNumber.trim().toUpperCase() : null,
+  const selectVehicleType = async (value: VehicleType) => {
+    setVehicleType(value);
+    if (!token) return;
+    try {
+      await updateVehicleType(token, value);
+    } catch {
+      Alert.alert("Could not save", "Failed to save vehicle type. Please try again.");
+    }
+  };
+
+  const groups = ALL_GROUPS.filter(
+    (g) => g.groupKey !== "vehicle_registration" || isVehicleRegistrationRequired(vehicleType)
+  );
+
+  const pickImage = async (key: DocKey) => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo library access to upload documents.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    const mimeType = asset.mimeType || "image/jpeg";
+    if (asset.fileSize && asset.fileSize > MAX_FILE_SIZE_BYTES) {
+      Alert.alert("File too large", FORMATS_DISCLAIMER);
+      return;
+    }
+    setPendingFiles((prev) => ({
+      ...prev,
+      [key]: {
+        uri: asset.uri,
+        name: asset.fileName || `${key}.${extFromMime(mimeType)}`,
+        type: mimeType,
+        size: asset.fileSize,
+      },
+    }));
+  };
+
+  const saveOne = async (key: DocKey): Promise<VerificationDocument | null> => {
+    if (!token) return null;
+    const number = numbers[key]?.trim();
+    const file = pendingFiles[key];
+    const current = serverDocs[key];
+    if (!file && (number ?? "") === (current?.number ?? "")) return current; // nothing changed
+
+    if (number && !validateDocNumber(key, number.toUpperCase())) {
+      Alert.alert("Invalid number", docNumberErrorMessage(key));
+      return current;
+    }
+
+    setSavingKey(key);
+    try {
+      const res = await saveVerificationDocument(token, key, {
+        number: number || undefined,
+        file,
       });
-
-      // Remember upload locally so the rider stays on pending even if GET is slow.
-      await saveSession({
-        ...session,
-        documentsSubmitted: true,
-        needsSignupCompletion: false,
+      if (!res.ok) {
+        Alert.alert("Upload failed", res.error);
+        return current;
+      }
+      const mergedDoc = { ...res.document, url: res.document.url ?? current?.url ?? file?.uri ?? null };
+      setServerDocs((prev) => ({ ...prev, [key]: mergedDoc }));
+      setPendingFiles((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
       });
+      if (res.riderSuspended) suspendedRef.current = true;
+      return mergedDoc;
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
-      // After upload, app access stays locked until admin sets status=active.
+  const deleteOne = (key: DocKey) => {
+    const doc = serverDocs[key];
+    if (!doc?.url) return;
+    Alert.alert(
+      "Delete document",
+      doc.status === "approved"
+        ? "This document is already approved — deleting it means your account will be sent back for re-verification. Continue?"
+        : "This removes the uploaded file. You can upload a new one anytime.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            if (!token) return;
+            setSavingKey(key);
+            try {
+              const res = await deleteVerificationDocument(token, key);
+              if (!res.ok) {
+                Alert.alert("Delete failed", res.error);
+                return;
+              }
+              setServerDocs((prev) => ({ ...prev, [key]: null }));
+              setNumbers((prev) => ({ ...prev, [key]: "" }));
+              setPendingFiles((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              });
+              if (res.riderSuspended) {
+                Alert.alert(
+                  "Sent back for re-verification",
+                  "Editing an approved document means your account needs to be re-verified before you can go online again.",
+                  [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
+                );
+              }
+            } finally {
+              setSavingKey(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSaveAll = async () => {
+    if (!vehicleType) {
+      Alert.alert("Vehicle type required", "Please select your vehicle type before submitting.");
+      return;
+    }
+    setSaving(true);
+    suspendedRef.current = false;
+    try {
+      const keysToSave = groups.flatMap((g) => g.members);
+      const results: Partial<Record<DocKey, VerificationDocument | null>> = {};
+      for (const key of keysToSave) {
+        results[key] = await saveOne(key);
+      }
+      if (suspendedRef.current) {
+        Alert.alert(
+          "Sent back for re-verification",
+          "Editing an approved document means your account needs to be re-verified.",
+          [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
+        );
+        return;
+      }
+      const anySubmitted = keysToSave.every((k) => !!results[k]?.url);
       Alert.alert(
-        "Documents submitted",
-        "Your documents were uploaded successfully. You cannot use the app until an admin verifies and approves your details.",
+        "Saved",
+        anySubmitted
+          ? "Your documents have been submitted. Our team will verify them before you can go online."
+          : "Upload the remaining documents to complete verification.",
         [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
       );
-    } catch (error: unknown) {
-      const err = error as { message?: string; error?: string; status?: number };
-      const message =
-        err?.error ||
-        err?.message ||
-        "Could not upload your documents. Please try again with clearer, smaller photos.";
-      Alert.alert(
-        "Upload failed",
-        `${message}${err?.status ? `\n\nStatus: ${err.status}` : ""}`
-      );
+    } catch {
+      Alert.alert("Error", "Failed to save one or more documents. Please try again.");
     } finally {
       setSaving(false);
     }
   };
 
+  type StatusBadge = { icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"]; text: string; color: string };
+
+  const computeGroupStatus = (group: DocGroup): StatusBadge | null => {
+    const rejectedAny = group.members.some(
+      (k) => !pendingFiles[k] && serverDocs[k]?.status === "rejected"
+    );
+    if (rejectedAny) return { icon: "close-circle", text: "Needs re-upload", color: Colors.danger };
+
+    const pendingFileAny = group.members.some((k) => !!pendingFiles[k]);
+    if (pendingFileAny) return { icon: "check-circle-outline", text: "Ready to save", color: Colors.accent };
+
+    // A member with no file uploaded at all yet is still on the rider's side,
+    // not the admin's — check this before "Verified"/"Pending review" below.
+    const missingAny = group.members.some((k) => !serverDocs[k]?.url);
+    if (missingAny) return null;
+
+    const allApproved = group.members.every((k) => serverDocs[k]?.status === "approved");
+    if (allApproved) return { icon: "check-circle", text: "Verified", color: Colors.success };
+
+    return { icon: "clock-outline", text: "Pending review", color: Colors.warning };
+  };
+
+  const uploadedCount = groups.flatMap((g) => g.members).filter((k) => serverDocs[k]?.url).length;
+  const totalRequired = groups.flatMap((g) => g.members).length;
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={Colors.accent} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
-      >
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => {
-              if (router.canGoBack()) router.back();
-              else router.replace("/pending-verification");
-            }}
-          >
-            <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text style={styles.title}>Upload Documents</Text>
-            <Text style={styles.subtitle}>Complete your verification details</Text>
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace("/pending-verification");
+          }}
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={styles.headerCopy}>
+          <Text style={styles.title}>Upload Documents</Text>
+          <Text style={styles.subtitle}>{uploadedCount} of {totalRequired} submitted</Text>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.notice}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={22} color={Colors.accent} />
+          <Text style={styles.noticeText}>
+            After you submit, your account stays locked until an admin approves these documents.
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Vehicle Type</Text>
+          <Text style={styles.sectionDescription}>
+            Vehicle Registration is only required for Bike/Scooty — not Cycle/E-Bike.
+          </Text>
+          <View style={styles.vehicleGrid}>
+            {VEHICLE_OPTIONS.map((vehicle) => {
+              const active = vehicleType === vehicle.value;
+              return (
+                <TouchableOpacity
+                  key={vehicle.value}
+                  style={[styles.vehicleOption, active && styles.vehicleOptionActive]}
+                  onPress={() => selectVehicleType(vehicle.value)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons
+                    name={vehicle.icon as any}
+                    size={24}
+                    color={active ? Colors.accent : Colors.textMuted}
+                  />
+                  <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
+                    {vehicle.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
 
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          showsVerticalScrollIndicator={false}
-          automaticallyAdjustKeyboardInsets
-        >
-          <View style={styles.notice}>
-            <MaterialCommunityIcons name="shield-lock-outline" size={22} color={Colors.accent} />
-            <Text style={styles.noticeText}>
-              After you submit, your account stays locked until an admin approves these documents.
-            </Text>
-          </View>
+        {groups.map((group) => {
+          const status = computeGroupStatus(group);
+          const numberSection = group.numberKey ? SECTION_BY_KEY[group.numberKey] : null;
 
-          <UploadSection
-            number="1"
-            title="Aadhaar Card"
-            description="Upload a clear image of your Aadhaar card"
-            document={aadhaar}
-            onPress={() => pickDocument("aadhaar")}
-          />
-
-          <UploadSection
-            number="2"
-            title="PAN Card"
-            description="Upload a clear image of your PAN card"
-            document={pan}
-            onPress={() => pickDocument("pan")}
-          />
-
-          <View style={styles.card}>
-            <View style={styles.sectionHeading}>
-              <View style={styles.numberBadge}>
-                <Text style={styles.numberText}>3</Text>
+          return (
+            <View key={group.groupKey} style={styles.card}>
+              <View style={styles.sectionHeading}>
+                <View style={styles.iconBadge}>
+                  <MaterialCommunityIcons name={group.headerIcon} size={18} color={Colors.accent} />
+                </View>
+                <View style={styles.sectionCopy}>
+                  <Text style={styles.sectionTitle}>{group.headerLabel}</Text>
+                  <Text style={styles.sectionDescription}>
+                    {status ? status.text : "Required for verification"}
+                  </Text>
+                </View>
+                {status && (
+                  <View style={[styles.statusBadge, { backgroundColor: status.color + "15" }]}>
+                    <MaterialCommunityIcons name={status.icon} size={14} color={status.color} />
+                    <Text style={[styles.statusBadgeText, { color: status.color }]}>{status.text}</Text>
+                  </View>
+                )}
               </View>
-              <View style={styles.sectionCopy}>
-                <Text style={styles.sectionTitle}>Vehicle Details</Text>
-                <Text style={styles.sectionDescription}>Select the vehicle used for deliveries</Text>
-              </View>
-            </View>
 
-            <View style={styles.vehicleGrid}>
-              {VEHICLES.map((vehicle) => {
-                const active = vehicleType === vehicle.value;
+              {numberSection && (
+                <>
+                  <Text style={styles.inputLabel}>Document Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={numbers[numberSection.key]}
+                    onChangeText={(text) => setNumbers((prev) => ({ ...prev, [numberSection.key]: text }))}
+                    placeholder={numberSection.placeholder}
+                    placeholderTextColor={Colors.textMuted}
+                    autoCapitalize="characters"
+                  />
+                  {(() => {
+                    const format = DOC_NUMBER_FORMATS[numberSection.key];
+                    if (!format) return null;
+                    const expectedLength = DOC_NUMBER_LENGTHS[numberSection.key];
+                    const currentLength = numbers[numberSection.key]?.length ?? 0;
+                    const mismatch = !!expectedLength && currentLength > 0 && currentLength !== expectedLength;
+                    return (
+                      <Text style={mismatch ? styles.lengthWarning : styles.formatHintText}>
+                        {mismatch
+                          ? `${currentLength > expectedLength! ? "Too long" : "Too short"} — expected ${format.description} (currently ${currentLength} characters).`
+                          : `Format: ${format.description}. Example: ${format.example}`}
+                      </Text>
+                    );
+                  })()}
+                </>
+              )}
+
+              {group.members.map((memberKey, idx) => {
+                const memberSection = SECTION_BY_KEY[memberKey];
+                const doc = serverDocs[memberKey];
+                const pendingFile = pendingFiles[memberKey];
+                const isSavingThis = savingKey === memberKey;
+                const previewUri = pendingFile?.uri ?? doc?.url ?? null;
+                const isMultiMember = group.members.length > 1;
+
                 return (
-                  <TouchableOpacity
-                    key={vehicle.value}
-                    style={[styles.vehicleOption, active && styles.vehicleOptionActive]}
-                    onPress={() => selectVehicle(vehicle.value)}
-                    activeOpacity={0.8}
-                  >
-                    <MaterialCommunityIcons
-                      name={vehicle.icon as any}
-                      size={25}
-                      color={active ? Colors.accent : Colors.textMuted}
-                    />
-                    <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
-                      {vehicle.label}
-                    </Text>
-                    {active && (
-                      <MaterialCommunityIcons
-                        name="check-circle"
-                        size={16}
-                        color={Colors.accent}
-                        style={styles.vehicleCheck}
-                      />
+                  <View key={memberKey} style={idx > 0 ? styles.memberBlockSpaced : undefined}>
+                    {isMultiMember ? (
+                      <Text style={[styles.memberHeader, idx === 0 && styles.memberHeaderFirst]}>
+                        {memberSection.label}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.inputLabel, { marginTop: numberSection ? Spacing.md : 0 }]}>
+                        Document File
+                      </Text>
                     )}
-                  </TouchableOpacity>
+
+                    {!pendingFile && doc?.status === "rejected" && doc?.rejection_reason ? (
+                      <View style={styles.rejectionBanner}>
+                        <MaterialCommunityIcons name="alert-circle" size={14} color={Colors.danger} />
+                        <Text style={styles.rejectionText}>{doc.rejection_reason}</Text>
+                      </View>
+                    ) : null}
+
+                    <TouchableOpacity
+                      style={[styles.uploadArea, (pendingFile || doc?.url) && styles.uploadAreaFilled]}
+                      activeOpacity={0.8}
+                      onPress={() => pickImage(memberKey)}
+                      disabled={isSavingThis}
+                    >
+                      {isSavingThis ? (
+                        <ActivityIndicator color={Colors.accent} />
+                      ) : previewUri ? (
+                        <>
+                          <Image source={{ uri: previewUri }} style={styles.preview} />
+                          <View style={styles.changeOverlay}>
+                            <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                            <Text style={styles.changeText}>Change</Text>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <View style={styles.uploadIcon}>
+                            <MaterialCommunityIcons name="image-plus" size={24} color={Colors.accent} />
+                          </View>
+                          <Text style={styles.uploadTitle}>Upload {memberSection.label}</Text>
+                          <Text style={styles.uploadHint}>{FORMATS_DISCLAIMER}</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    {(pendingFile || doc?.url) && (
+                      <View style={styles.fileMetaRow}>
+                        <Text style={styles.formatsHint}>{FORMATS_DISCLAIMER}</Text>
+                        {(() => {
+                          const sizeLabel = pendingFile?.size
+                            ? formatPickedFileSize(pendingFile.size)
+                            : doc?.file_size ?? null;
+                          return sizeLabel ? <Text style={styles.fileSizeText}>{sizeLabel}</Text> : null;
+                        })()}
+                      </View>
+                    )}
+                    {doc?.url && (
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        activeOpacity={0.7}
+                        onPress={() => deleteOne(memberKey)}
+                        disabled={isSavingThis}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={14} color={Colors.danger} />
+                        <Text style={styles.deleteBtnText}>Delete uploaded file</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 );
               })}
             </View>
+          );
+        })}
 
-            <Text style={styles.inputLabel}>Registration Number</Text>
-            {vehicleType === "bike" ? (
-              <TextInput
-                style={styles.input}
-                value={registrationNumber}
-                onChangeText={setRegistrationNumber}
-                placeholder="e.g. MH12AB1234"
-                placeholderTextColor={Colors.textMuted}
-                autoCapitalize="characters"
-                autoCorrect={false}
-              />
-            ) : (
-              <View style={styles.notApplicable}>
-                <MaterialCommunityIcons name="minus-circle-outline" size={18} color={Colors.textMuted} />
-                <Text style={styles.notApplicableText}>
-                  Not applicable for {vehicleType === "cycle" ? "cycles" : "EV scooties"}
-                </Text>
-                <Text style={styles.nullText}>NULL</Text>
-              </View>
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.submitButton, saving && styles.disabled]}
-            onPress={handleSubmit}
-            disabled={saving}
-            activeOpacity={0.85}
-          >
-            {saving ? (
-              <ActivityIndicator color={Colors.accentText} />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="cloud-upload-outline" size={21} color={Colors.accentText} />
-                <Text style={styles.submitText}>Submit Documents</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        <TouchableOpacity
+          style={[styles.submitButton, saving && styles.disabled]}
+          onPress={handleSaveAll}
+          disabled={saving}
+          activeOpacity={0.85}
+        >
+          {saving ? (
+            <ActivityIndicator color={Colors.accentText} />
+          ) : (
+            <>
+              <MaterialCommunityIcons name="cloud-upload-outline" size={21} color={Colors.accentText} />
+              <Text style={styles.submitText}>Submit Documents</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-function UploadSection({
-  number,
-  title,
-  description,
-  document,
-  onPress,
-}: {
-  number: string;
-  title: string;
-  description: string;
-  document: PickedDocument | null;
-  onPress: () => void;
-}) {
-  return (
-    <View style={styles.card}>
-      <View style={styles.sectionHeading}>
-        <View style={styles.numberBadge}>
-          <Text style={styles.numberText}>{number}</Text>
-        </View>
-        <View style={styles.sectionCopy}>
-          <Text style={styles.sectionTitle}>{title}</Text>
-          <Text style={styles.sectionDescription}>{description}</Text>
-        </View>
-        {document && <MaterialCommunityIcons name="check-circle" size={22} color={Colors.success} />}
-      </View>
-
-      <TouchableOpacity
-        style={[styles.uploadArea, document && styles.uploadAreaSelected]}
-        onPress={onPress}
-        activeOpacity={0.8}
-      >
-        {document ? (
-          <>
-            <Image source={{ uri: document.uri }} style={styles.preview} />
-            <View style={styles.changeOverlay}>
-              <MaterialCommunityIcons name="image-edit-outline" size={17} color="#fff" />
-              <Text style={styles.changeText}>Change image</Text>
-            </View>
-          </>
-        ) : (
-          <>
-            <View style={styles.uploadIcon}>
-              <MaterialCommunityIcons name="image-plus" size={27} color={Colors.accent} />
-            </View>
-            <Text style={styles.uploadTitle}>Choose from gallery</Text>
-            <Text style={styles.uploadHint}>JPG or PNG • Make sure all details are visible</Text>
-          </>
-        )}
-      </TouchableOpacity>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   safe: { flex: 1, backgroundColor: Colors.bg },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: {
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
@@ -348,7 +571,7 @@ const styles = StyleSheet.create({
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
     padding: Spacing.lg,
-    paddingBottom: 140,
+    paddingBottom: 48,
     gap: Spacing.md,
   },
   notice: {
@@ -374,22 +597,86 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  sectionHeading: { flexDirection: "row", alignItems: "center", marginBottom: Spacing.md },
-  numberBadge: {
+  sectionHeading: { flexDirection: "row", alignItems: "center", marginBottom: Spacing.md, gap: Spacing.sm },
+  iconBadge: {
     width: 30,
     height: 30,
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.accentLight,
-    marginRight: Spacing.sm,
   },
-  numberText: { color: Colors.accent, fontWeight: "800", fontSize: 13 },
   sectionCopy: { flex: 1 },
-  sectionTitle: { color: Colors.text, fontSize: 16, fontWeight: "700" },
+  sectionTitle: { color: Colors.text, fontSize: 15, fontWeight: "700" },
   sectionDescription: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  statusBadgeText: { fontSize: 11, fontWeight: "700" },
+  vehicleGrid: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm, marginTop: Spacing.md },
+  vehicleOption: {
+    flexBasis: "47%",
+    flexGrow: 1,
+    height: 76,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  vehicleOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
+  vehicleLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: "600" },
+  vehicleLabelActive: { color: Colors.accentDark },
+  inputLabel: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.md,
+    color: Colors.text,
+    fontSize: 15,
+    marginBottom: 4,
+  },
+  formatHintText: { color: Colors.textMuted, fontSize: 11, fontWeight: "500", marginBottom: Spacing.sm },
+  lengthWarning: { color: Colors.danger, fontSize: 11, fontWeight: "600", marginBottom: Spacing.sm },
+  memberHeader: { color: Colors.text, fontSize: 12, fontWeight: "700", marginBottom: 6 },
+  memberHeaderFirst: { marginTop: Spacing.sm },
+  memberBlockSpaced: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  rejectionBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    backgroundColor: Colors.dangerLight,
+    borderWidth: 1,
+    borderColor: Colors.danger + "30",
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  rejectionText: { color: Colors.danger, fontSize: 12, fontWeight: "600", flex: 1, lineHeight: 16 },
   uploadArea: {
-    height: 150,
+    height: 130,
     borderWidth: 1.5,
     borderStyle: "dashed",
     borderColor: Colors.borderLight,
@@ -399,17 +686,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
-  uploadAreaSelected: { borderStyle: "solid", borderColor: Colors.accent + "50" },
+  uploadAreaFilled: { borderStyle: "solid", borderColor: Colors.accent + "50" },
   uploadIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.accentLight,
     marginBottom: Spacing.sm,
   },
-  uploadTitle: { color: Colors.text, fontSize: 14, fontWeight: "700" },
+  uploadTitle: { color: Colors.text, fontSize: 13, fontWeight: "700" },
   uploadHint: { color: Colors.textMuted, fontSize: 11, marginTop: 4, textAlign: "center" },
   preview: { width: "100%", height: "100%", resizeMode: "cover" },
   changeOverlay: {
@@ -425,51 +712,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   changeText: { color: "#fff", fontSize: 11, fontWeight: "600" },
-  vehicleGrid: { flexDirection: "row", gap: Spacing.sm, marginBottom: Spacing.lg },
-  vehicleOption: {
-    flex: 1,
-    height: 88,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-  },
-  vehicleOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
-  vehicleLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: "600" },
-  vehicleLabelActive: { color: Colors.accentDark },
-  vehicleCheck: { position: "absolute", right: 6, top: 6 },
-  inputLabel: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  input: {
-    height: 48,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    paddingHorizontal: Spacing.md,
-    color: Colors.text,
-    fontSize: 15,
-  },
-  notApplicable: {
-    height: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    paddingHorizontal: Spacing.md,
-  },
-  notApplicableText: { flex: 1, color: Colors.textMuted, fontSize: 13 },
-  nullText: { color: Colors.textMuted, fontSize: 11, fontWeight: "700" },
+  fileMetaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
+  formatsHint: { color: Colors.textMuted, fontSize: 10 },
+  fileSizeText: { color: Colors.textMuted, fontSize: 10, fontWeight: "600" },
+  deleteBtn: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: Spacing.sm, alignSelf: "flex-start" },
+  deleteBtnText: { color: Colors.danger, fontSize: 12, fontWeight: "600" },
   submitButton: {
     height: 54,
     borderRadius: BorderRadius.md,

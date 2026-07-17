@@ -20,6 +20,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession, clearSession, UserSession } from "../../session";
+import { uploadRiderImage, uploadVehicleImage } from "../../lib/storage";
 
 type Profile = {
   user_id: string;
@@ -31,6 +32,8 @@ type Profile = {
   verification_number: string | null;
   is_online: boolean;
   profile_image_url: string | null;
+  vehicle_image_url: string | null;
+  vehicle_type: string | null;
   created_at: string;
 };
 
@@ -64,6 +67,8 @@ const mapPartnerToProfile = (partner: DeliveryPartnerListItem): Profile => ({
   verification_number: partner.profile?.verification_number || null,
   is_online: Boolean(partner.profile?.is_online),
   profile_image_url: partner.profile?.profile_image_url || null,
+  vehicle_image_url: null,
+  vehicle_type: null,
   created_at: partner.profile?.created_at || partner.created_at || "",
 });
 
@@ -170,6 +175,10 @@ export default function ProfileScreen() {
     }, [token, fetchStats])
   );
 
+  // Uploads directly to the delivery_partner_image bucket (anon-direct, same
+  // pattern as the shopkeeper app's lib/storage.ts) instead of the old
+  // PATCH /delivery-partner/profile-image base64-to-backend flow — the
+  // backend only stores the resulting public URL now.
   const handlePickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
@@ -182,32 +191,70 @@ export default function ProfileScreen() {
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
-      base64: true,
     });
 
-    if (result.canceled || !result.assets?.[0]?.base64) return;
+    if (result.canceled || !result.assets?.[0]) return;
 
-    const asset = result.assets[0];
+    const session = await getSession();
+    if (!session?.user?.id) return;
+
     setUploadingImage(true);
     try {
-      const res = await apiFetch<{ success: boolean; profile_image_url: string }>(
-        "/delivery-partner/profile-image",
-        {
-          method: "PATCH",
-          body: {
-            image_base64: asset.base64,
-            mime_type: asset.mimeType || "image/jpeg",
-          },
-        },
+      const uploadRes = await uploadRiderImage(session.user.id, result.assets[0].uri);
+      if (!uploadRes.ok) {
+        Alert.alert("Error", uploadRes.error || "Failed to upload image. Please try again.");
+        return;
+      }
+      await apiFetch(
+        "/delivery-partner/photo-urls",
+        { method: "PATCH", body: { profile_image_url: uploadRes.url } },
         token
       );
-      if (res.success) {
-        setProfile((prev) => prev ? { ...prev, profile_image_url: res.profile_image_url } : prev);
-      }
+      setProfile((prev) => (prev ? { ...prev, profile_image_url: uploadRes.url } : prev));
     } catch {
       Alert.alert("Error", "Failed to upload image. Please try again.");
     } finally {
       setUploadingImage(false);
+    }
+  };
+
+  const [uploadingVehicleImage, setUploadingVehicleImage] = useState(false);
+  const handlePickVehicleImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo library access to change your vehicle picture.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.7,
+    });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const session = await getSession();
+    if (!session?.user?.id) return;
+
+    setUploadingVehicleImage(true);
+    try {
+      const uploadRes = await uploadVehicleImage(session.user.id, result.assets[0].uri);
+      if (!uploadRes.ok) {
+        Alert.alert("Error", uploadRes.error || "Failed to upload image. Please try again.");
+        return;
+      }
+      await apiFetch(
+        "/delivery-partner/photo-urls",
+        { method: "PATCH", body: { vehicle_image_url: uploadRes.url } },
+        token
+      );
+      setProfile((prev) => (prev ? { ...prev, vehicle_image_url: uploadRes.url } : prev));
+    } catch {
+      Alert.alert("Error", "Failed to upload image. Please try again.");
+    } finally {
+      setUploadingVehicleImage(false);
     }
   };
 
@@ -380,24 +427,32 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.infoCard}>
-            <View style={styles.fieldRowView}>
-              <View style={styles.fieldLabelRow}>
-                <MaterialCommunityIcons name="shield-check" size={14} color={Colors.accent} />
-                <Text style={styles.fieldLabel}>Verification Document</Text>
+            <View style={styles.vehiclePhotoRow}>
+              <TouchableOpacity
+                style={styles.vehiclePhotoThumb}
+                onPress={handlePickVehicleImage}
+                disabled={uploadingVehicleImage}
+                activeOpacity={0.8}
+              >
+                {profile?.vehicle_image_url ? (
+                  <Image source={{ uri: profile.vehicle_image_url }} style={styles.vehiclePhotoImage} />
+                ) : (
+                  <MaterialCommunityIcons name="motorbike" size={24} color={Colors.textMuted} />
+                )}
+                <View style={styles.vehiclePhotoOverlay}>
+                  {uploadingVehicleImage ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                  )}
+                </View>
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Vehicle Photo</Text>
+                <Text style={styles.fieldValueMuted}>
+                  {profile?.vehicle_image_url ? "Tap to change" : "Tap to add a photo of your vehicle"}
+                </Text>
               </View>
-              <Text style={styles.fieldValue}>
-                {profile?.verification_document || "---"}
-              </Text>
-            </View>
-            <View style={styles.fieldDivider} />
-            <View style={styles.fieldRowView}>
-              <View style={styles.fieldLabelRow}>
-                <MaterialCommunityIcons name="card-account-details" size={14} color={Colors.accent} />
-                <Text style={styles.fieldLabel}>Verification Number</Text>
-              </View>
-              <Text style={styles.fieldValue}>
-                {profile?.verification_number || "---"}
-              </Text>
             </View>
             <View style={styles.fieldDivider} />
             <View style={styles.fieldRowView}>
@@ -439,7 +494,7 @@ export default function ProfileScreen() {
               <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
               <View style={styles.quickActionCopy}>
                 <Text style={styles.quickActionText}>Upload Documents</Text>
-                <Text style={styles.quickActionSubtext}>Aadhaar, PAN and vehicle details</Text>
+                <Text style={styles.quickActionSubtext}>Aadhaar, PAN, Driving License, Vehicle RC</Text>
               </View>
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
@@ -562,6 +617,29 @@ const styles = StyleSheet.create({
   fieldValueMuted: { color: Colors.textSecondary, fontSize: 16 },
   fieldInput: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.md, height: 42, color: Colors.text, fontSize: 15, borderWidth: 1, borderColor: Colors.accent + "40" },
   fieldDivider: { height: 1, backgroundColor: Colors.border },
+
+  vehiclePhotoRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md, paddingVertical: Spacing.sm },
+  vehiclePhotoThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    position: "relative",
+  },
+  vehiclePhotoImage: { width: 64, height: 64 },
+  vehiclePhotoOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 22,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   quickActions: {
     backgroundColor: Colors.card,
