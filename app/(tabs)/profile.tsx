@@ -10,6 +10,8 @@ import {
   Alert,
   Animated,
   Image,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -268,7 +270,12 @@ export default function ProfileScreen() {
   const initial = profile?.name?.charAt(0)?.toUpperCase() || "?";
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+      >
       <View style={styles.responsiveWrap}>
       <Animated.View style={[styles.headerRow, { opacity: fadeAnim }]}>
         <Text style={styles.header}>Profile</Text>
@@ -287,7 +294,13 @@ export default function ProfileScreen() {
         )}
       </Animated.View>
 
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        automaticallyAdjustKeyboardInsets
+      >
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           <View style={styles.avatarSection}>
             <TouchableOpacity
@@ -453,6 +466,7 @@ export default function ProfileScreen() {
         </Animated.View>
       </ScrollView>
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -492,13 +506,14 @@ function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly,
 const styles = StyleSheet.create({
   responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   safe: { flex: 1, backgroundColor: Colors.bg },
+  flex: { flex: 1 },
   centered: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
   header: { color: Colors.text, fontSize: 28, fontWeight: "800" },
   editBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: Colors.accentLight },
   editBtnText: { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   cancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: "600" },
-  scroll: { padding: Spacing.lg, paddingBottom: 60 },
+  scroll: { padding: Spacing.lg, paddingBottom: 140 },
 
   avatarSection: { alignItems: "center", marginBottom: Spacing.lg },
   avatarOuter: { position: "relative", marginBottom: Spacing.md, width: 88, height: 88 },

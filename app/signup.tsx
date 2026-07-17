@@ -17,20 +17,17 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { saveSession } from "../session";
-
-const DOC_TYPES = ["Aadhaar", "PAN", "Driving License"];
+import { getSession, saveSession } from "../session";
+import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { phone, signupTicket } = useLocalSearchParams<{ phone: string; signupTicket?: string }>();
+  const { phone: phoneParam, signupTicket } = useLocalSearchParams<{ phone: string; signupTicket?: string }>();
 
+  const [phone, setPhone] = useState(String(phoneParam || ""));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
-  const [vehicleNumber, setVehicleNumber] = useState("");
-  const [docType, setDocType] = useState("Aadhaar");
-  const [docNumber, setDocNumber] = useState("");
   const [loading, setLoading] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -38,6 +35,17 @@ export default function SignupScreen() {
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (phoneParam) {
+        setPhone(String(phoneParam));
+        return;
+      }
+      const session = await getSession();
+      if (session?.user?.phone) setPhone(session.user.phone);
+    })();
+  }, [phoneParam]);
 
   const isValid = name.trim().length >= 2;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -47,24 +55,29 @@ export default function SignupScreen() {
     if (!isValid) return;
     setLoading(true);
     try {
+      const session = await getSession();
+      const ticket = String(signupTicket || session?.signupTicket || "").trim();
+
       const res = await apiFetch<{
         success: boolean;
         error?: string;
         token?: string;
         user?: { id: string; name?: string; phone?: string; email?: string };
-      }>("/delivery-partner/signup/complete", {
-        method: "POST",
-        body: {
-          phone: normalizedPhone,
-          signupTicket,
-          name: name.trim(),
-          email: email.trim() || undefined,
-          address: address.trim() || undefined,
-          vehicleNumber: vehicleNumber.trim() || undefined,
-          verificationDocument: docType,
-          verificationNumber: docNumber.trim() || undefined,
+      }>(
+        "/delivery-partner/signup/complete",
+        {
+          method: "POST",
+          body: {
+            phone: normalizedPhone,
+            signupTicket: ticket || undefined,
+            name: name.trim(),
+            email: email.trim() || undefined,
+            address: address.trim() || undefined,
+          },
         },
-      });
+        // Bearer from OTP verify — required by backend (403 without it)
+        session?.token
+      );
 
       if (!res.success || !res.token || !res.user) {
         Alert.alert("Signup Failed", res.error || "Could not complete registration. Please try again.");
@@ -81,8 +94,12 @@ export default function SignupScreen() {
           phone: res.user.phone || normalizedPhone,
           email: res.user.email || email.trim() || undefined,
         },
+        needsSignupCompletion: false,
+        signupTicket: undefined,
       });
-      router.replace("/(tabs)/home");
+
+      // New riders must upload docs next (Aadhaar / PAN / vehicle).
+      router.replace(await resolveAuthenticatedRoute(res.token));
     } catch (err: unknown) {
       const error = err as { error?: string; message?: string; status?: number };
       const details = error?.error || error?.message || "Something went wrong.";
@@ -96,12 +113,19 @@ export default function SignupScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+        >
           <Animated.View style={{ opacity: fadeAnim }}>
             <View style={styles.headerIcon}>
               <MaterialCommunityIcons name="account-check" size={32} color={Colors.accent} />
@@ -150,42 +174,18 @@ export default function SignupScreen() {
                 onChangeText={setAddress}
               />
 
-              <Text style={styles.label}>Vehicle Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. MH12AB1234"
-                placeholderTextColor={Colors.textMuted}
-                value={vehicleNumber}
-                onChangeText={setVehicleNumber}
-                autoCapitalize="characters"
-              />
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.label}>Verification Document</Text>
-              <View style={styles.docRow}>
-                {DOC_TYPES.map((dt) => (
-                  <TouchableOpacity
-                    key={dt}
-                    style={[styles.docChip, docType === dt && styles.docChipActive]}
-                    onPress={() => setDocType(dt)}
-                  >
-                    <Text style={[styles.docChipText, docType === dt && styles.docChipTextActive]}>
-                      {dt}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+            <View style={styles.nextStepCard}>
+              <View style={styles.nextStepIcon}>
+                <MaterialCommunityIcons name="file-document-edit-outline" size={22} color={Colors.accent} />
               </View>
-
-              <Text style={styles.label}>Document Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder={`Enter ${docType} number`}
-                placeholderTextColor={Colors.textMuted}
-                value={docNumber}
-                onChangeText={setDocNumber}
-                autoCapitalize="characters"
-              />
+              <View style={styles.nextStepCopy}>
+                <Text style={styles.nextStepTitle}>Document verification is next</Text>
+                <Text style={styles.nextStepText}>
+                  After signup, upload your Aadhaar card, PAN card and vehicle details on the secure document page.
+                </Text>
+              </View>
             </View>
 
             <TouchableOpacity
@@ -212,7 +212,15 @@ export default function SignupScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
-  scroll: { padding: Spacing.lg, paddingBottom: 60, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
+  flex: { flex: 1 },
+  scroll: {
+    flexGrow: 1,
+    padding: Spacing.lg,
+    paddingBottom: 120,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
+  },
   headerIcon: {
     width: 64,
     height: 64,
@@ -262,18 +270,28 @@ const styles = StyleSheet.create({
     height: 48,
   },
   readOnlyText: { color: Colors.textSecondary, fontSize: 15 },
-  docRow: { flexDirection: "row", gap: Spacing.sm },
-  docChip: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.round,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
+  nextStepCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.md,
+    backgroundColor: Colors.accentLight,
+    borderWidth: 1,
+    borderColor: Colors.accent + "30",
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  nextStepIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: Colors.bg,
   },
-  docChipActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
-  docChipText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
-  docChipTextActive: { color: Colors.accentText },
+  nextStepCopy: { flex: 1 },
+  nextStepTitle: { color: Colors.accentDark, fontSize: 14, fontWeight: "700" },
+  nextStepText: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3 },
   button: {
     backgroundColor: Colors.accent,
     borderRadius: BorderRadius.lg,

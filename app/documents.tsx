@@ -17,16 +17,10 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
-import { apiFetch } from "../constants/api";
-import { getSession } from "../session";
+import { getSession, saveSession } from "../session";
+import { uploadRiderDocuments, type PickedDocument, type VehicleType } from "../lib/riderDocuments";
 
 type DocumentKind = "aadhaar" | "pan";
-type VehicleType = "bike" | "cycle" | "ev_scooty";
-type PickedDocument = {
-  uri: string;
-  base64: string;
-  mimeType: string;
-};
 
 const VEHICLES: { value: VehicleType; label: string; icon: string }[] = [
   { value: "bike", label: "Bike", icon: "motorbike" },
@@ -50,16 +44,20 @@ export default function DocumentsScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
-      quality: 0.7,
+      quality: 0.45,
       base64: true,
     });
 
     const asset = result.canceled ? null : result.assets?.[0];
-    if (!asset?.base64) return;
+    if (!asset?.uri) return;
+    if (!asset.base64) {
+      Alert.alert("Could not read image", "Please try another photo of your document.");
+      return;
+    }
 
-    const document = {
+    const document: PickedDocument = {
       uri: asset.uri,
       base64: asset.base64,
       mimeType: asset.mimeType || "image/jpeg",
@@ -91,43 +89,58 @@ export default function DocumentsScreen() {
         return;
       }
 
-      await apiFetch(
-        "/delivery-partner/documents",
-        {
-          method: "PATCH",
-          body: {
-            aadhaar_image_base64: aadhaar.base64,
-            aadhaar_mime_type: aadhaar.mimeType,
-            pan_image_base64: pan.base64,
-            pan_mime_type: pan.mimeType,
-            vehicle_type: vehicleType,
-            registration_number:
-              vehicleType === "bike" ? registrationNumber.trim().toUpperCase() : null,
-          },
-        },
-        session.token
-      );
+      await uploadRiderDocuments({
+        token: session.token,
+        aadhaar,
+        pan,
+        vehicleType,
+        registrationNumber:
+          vehicleType === "bike" ? registrationNumber.trim().toUpperCase() : null,
+      });
 
-      Alert.alert("Documents submitted", "Your documents have been sent for verification.", [
-        { text: "Done", onPress: () => router.back() },
-      ]);
+      // Remember upload locally so the rider stays on pending even if GET is slow.
+      await saveSession({
+        ...session,
+        documentsSubmitted: true,
+        needsSignupCompletion: false,
+      });
+
+      // After upload, app access stays locked until admin sets status=active.
+      Alert.alert(
+        "Documents submitted",
+        "Your documents were uploaded successfully. You cannot use the app until an admin verifies and approves your details.",
+        [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
+      );
     } catch (error: unknown) {
+      const err = error as { message?: string; error?: string; status?: number };
       const message =
-        error instanceof Error ? error.message : "Could not upload your documents. Please try again.";
-      Alert.alert("Upload failed", message);
+        err?.error ||
+        err?.message ||
+        "Could not upload your documents. Please try again with clearer, smaller photos.";
+      Alert.alert(
+        "Upload failed",
+        `${message}${err?.status ? `\n\nStatus: ${err.status}` : ""}`
+      );
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => {
+              if (router.canGoBack()) router.back();
+              else router.replace("/pending-verification");
+            }}
+          >
             <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
@@ -139,12 +152,14 @@ export default function DocumentsScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
         >
           <View style={styles.notice}>
             <MaterialCommunityIcons name="shield-lock-outline" size={22} color={Colors.accent} />
             <Text style={styles.noticeText}>
-              Your documents are securely submitted and used only for account verification.
+              After you submit, your account stays locked until an admin approves these documents.
             </Text>
           </View>
 
@@ -333,7 +348,7 @@ const styles = StyleSheet.create({
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
     padding: Spacing.lg,
-    paddingBottom: 48,
+    paddingBottom: 140,
     gap: Spacing.md,
   },
   notice: {

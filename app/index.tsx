@@ -22,10 +22,23 @@ export default function EntryScreen() {
     ]).start();
 
     const timer = setTimeout(async () => {
-      const session = await getSession();
-      if (session?.token && session?.user?.id) {
-        router.replace("/(tabs)/home");
-      } else {
+      try {
+        const session = await getSession();
+        if (session?.token && session?.needsSignupCompletion) {
+          router.replace({
+            pathname: "/signup",
+            params: {
+              phone: session.user?.phone || "",
+              signupTicket: session.signupTicket || "",
+            },
+          });
+        } else if (session?.token && session?.user?.id) {
+          const { resolveAuthenticatedRoute } = await import("../lib/riderVerification");
+          router.replace(await resolveAuthenticatedRoute(session.token));
+        } else {
+          router.replace("/phone");
+        }
+      } catch {
         router.replace("/phone");
       }
     }, 1400);

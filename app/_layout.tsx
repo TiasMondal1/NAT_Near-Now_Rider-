@@ -7,6 +7,7 @@ import { Colors } from "../constants/theme";
 import { validateConfig } from "../constants/config";
 import { getSession } from "../session";
 import { apiFetch, setSessionExpiredHandler } from "../constants/api";
+import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 
 // expo-notifications is unsupported in Expo Go (SDK 53+); skip in that environment
 const isExpoGo = Constants.executionEnvironment === "storeClient";
@@ -125,14 +126,36 @@ export default function RootLayout() {
       setIsLoggedIn(loggedIn);
 
       const current = segments[0];
-      const inAuthFlow = current === "phone" || current === "otp" || current === "signup";
+      const inAuthFlow = current === "phone" || current === "otp";
+      const inSignupFlow = current === "signup";
+      const inVerificationFlow =
+        current === "pending-verification" || current === "documents";
       const inProtectedFlow =
-        current === "(tabs)" || current === "delivery" || current === "documents";
+        current === "(tabs)" || current === "delivery" || inVerificationFlow;
 
-      if (loggedIn && inAuthFlow) {
-        router.replace("/(tabs)/home");
-      } else if (!loggedIn && inProtectedFlow) {
-        router.replace("/phone");
+      // OTP done but profile form not finished — keep them on /signup.
+      if (loggedIn && session?.needsSignupCompletion) {
+        if (!inSignupFlow && current !== "otp") {
+          router.replace({
+            pathname: "/signup",
+            params: {
+              phone: session.user?.phone || "",
+              signupTicket: session.signupTicket || "",
+            },
+          });
+        }
+        return;
+      }
+
+      if (loggedIn && inAuthFlow && session?.token) {
+        try {
+          router.replace(await resolveAuthenticatedRoute(session.token));
+        } catch {
+          router.replace("/pending-verification");
+        }
+      } else if (!loggedIn && (inProtectedFlow || inSignupFlow)) {
+        // Signup without a session (ticket-only) is allowed; only kick protected screens.
+        if (inProtectedFlow) router.replace("/phone");
       }
     })();
 

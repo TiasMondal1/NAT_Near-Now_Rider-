@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -54,8 +55,7 @@ export default function PhoneScreen() {
         Alert.alert("Error", "Unable to send OTP right now. Please try again.");
         return;
       }
-      // verify-otp resolves login vs. "no account yet" by (phone, role) — otp.tsx
-      // routes to signup automatically if this phone has no delivery_partner account.
+      // Registration is enforced after OTP verify — unregistered numbers cannot log in.
       router.push({ pathname: "/otp", params: { phone: fullPhone, flow: "existing" } });
     } catch (err: unknown) {
       const error = err as { message?: string };
@@ -87,120 +87,132 @@ export default function PhoneScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <Animated.View style={[styles.header, { transform: [{ scale: logoScale }] }]}>
-          <View style={styles.iconCircle}>
-            <MaterialCommunityIcons name="truck-fast" size={28} color={Colors.accentText} />
-          </View>
-          <Text style={styles.brand}>NEAR & NOW</Text>
-          <Text style={styles.brandSub}>DELIVERY PARTNER</Text>
-        </Animated.View>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+        >
+          <Animated.View style={[styles.header, { transform: [{ scale: logoScale }] }]}>
+            <View style={styles.iconCircle}>
+              <MaterialCommunityIcons name="truck-fast" size={28} color={Colors.accentText} />
+            </View>
+            <Text style={styles.brand}>NEAR & NOW</Text>
+            <Text style={styles.brandSub}>DELIVERY PARTNER</Text>
+          </Animated.View>
 
-        <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-          {selectedFlow === null ? (
-            <>
-              <Text style={styles.title}>Welcome Rider</Text>
-              <Text style={styles.subtitle}>Choose how you want to continue.</Text>
+          <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+            {selectedFlow === null ? (
+              <>
+                <Text style={styles.title}>Welcome Rider</Text>
+                <Text style={styles.subtitle}>Choose how you want to continue.</Text>
 
-              <TouchableOpacity
-                style={styles.button}
-                onPress={() => setSelectedFlow("existing")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.buttonInner}>
-                  <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
-                  <Text style={styles.buttonText}>Existing User</Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => setSelectedFlow("new")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.buttonInner}>
-                  <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
-                  <Text style={styles.secondaryButtonText}>New User Registration</Text>
-                </View>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <Text style={styles.title}>
-                {selectedFlow === "existing" ? "Existing User" : "New User Registration"}
-              </Text>
-              <Text style={styles.subtitle}>Enter your phone number to continue.</Text>
-
-              <View style={styles.inputCard}>
-                <View style={styles.inputRow}>
-                  <View style={styles.prefix}>
-                    <Text style={styles.prefixText}>+91</Text>
+                <TouchableOpacity
+                  style={styles.button}
+                  onPress={() => setSelectedFlow("existing")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.buttonInner}>
+                    <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
+                    <Text style={styles.buttonText}>Existing User</Text>
                   </View>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Phone number"
-                    placeholderTextColor={Colors.textMuted}
-                    keyboardType="phone-pad"
-                    maxLength={10}
-                    value={phone}
-                    onChangeText={setPhone}
-                    autoFocus
-                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => setSelectedFlow("new")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.buttonInner}>
+                    <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
+                    <Text style={styles.secondaryButtonText}>New User Registration</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.title}>
+                  {selectedFlow === "existing" ? "Existing User" : "New User Registration"}
+                </Text>
+                <Text style={styles.subtitle}>Enter your phone number to continue.</Text>
+
+                <View style={styles.inputCard}>
+                  <View style={styles.inputRow}>
+                    <View style={styles.prefix}>
+                      <Text style={styles.prefixText}>+91</Text>
+                    </View>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Phone number"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      value={phone}
+                      onChangeText={setPhone}
+                      autoFocus
+                    />
+                  </View>
                 </View>
-              </View>
 
-              {selectedFlow === "existing" ? (
+                {selectedFlow === "existing" ? (
+                  <TouchableOpacity
+                    style={[styles.button, disabled && styles.buttonDisabled]}
+                    onPress={handleExistingUser}
+                    disabled={disabled}
+                    activeOpacity={0.8}
+                  >
+                    {checkingExisting ? (
+                      <ActivityIndicator color={Colors.accentText} />
+                    ) : (
+                      <View style={styles.buttonInner}>
+                        <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
+                        <Text style={styles.buttonText}>Continue as Existing User</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.secondaryButton, disabled && styles.buttonDisabled]}
+                    onPress={handleNewRegistration}
+                    disabled={disabled}
+                    activeOpacity={0.8}
+                  >
+                    {registering ? (
+                      <ActivityIndicator color={Colors.accent} />
+                    ) : (
+                      <View style={styles.buttonInner}>
+                        <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
+                        <Text style={styles.secondaryButtonText}>Continue to Registration</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
-                  style={[styles.button, disabled && styles.buttonDisabled]}
-                  onPress={handleExistingUser}
-                  disabled={disabled}
+                  style={styles.backLink}
+                  onPress={() => {
+                    setSelectedFlow(null);
+                    setPhone("");
+                  }}
                   activeOpacity={0.8}
                 >
-                  {checkingExisting ? (
-                    <ActivityIndicator color={Colors.accentText} />
-                  ) : (
-                    <View style={styles.buttonInner}>
-                      <MaterialCommunityIcons name="account-check" size={20} color={Colors.accentText} />
-                      <Text style={styles.buttonText}>Continue as Existing User</Text>
-                    </View>
-                  )}
+                  <Text style={styles.backLinkText}>Back to options</Text>
                 </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.secondaryButton, disabled && styles.buttonDisabled]}
-                  onPress={handleNewRegistration}
-                  disabled={disabled}
-                  activeOpacity={0.8}
-                >
-                  {registering ? (
-                    <ActivityIndicator color={Colors.accent} />
-                  ) : (
-                    <View style={styles.buttonInner}>
-                      <MaterialCommunityIcons name="account-plus" size={20} color={Colors.accent} />
-                      <Text style={styles.secondaryButtonText}>Continue to Registration</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              )}
+              </>
+            )}
 
-              <TouchableOpacity
-                style={styles.backLink}
-                onPress={() => {
-                  setSelectedFlow(null);
-                  setPhone("");
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.backLinkText}>Back to options</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          <Text style={styles.terms}>
-            Existing users go to Home. Missing profile goes to registration.
-          </Text>
-        </Animated.View>
+            <Text style={styles.terms}>
+              Existing users must already be registered. New users register first, then upload documents for verification.
+            </Text>
+          </Animated.View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -208,7 +220,15 @@ export default function PhoneScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
-  container: { flex: 1, paddingHorizontal: Spacing.lg, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
+  flex: { flex: 1 },
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 120,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
+  },
   header: { paddingTop: Spacing.xxl + 16, alignItems: "center" },
   iconCircle: {
     width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.accent,
@@ -217,7 +237,7 @@ const styles = StyleSheet.create({
   },
   brand: { color: Colors.text, fontSize: 22, fontWeight: "800", letterSpacing: 4 },
   brandSub: { color: Colors.textMuted, fontSize: 11, fontWeight: "600", letterSpacing: 3, marginTop: 4 },
-  content: { flex: 1, justifyContent: "center", marginTop: -60 },
+  content: { flexGrow: 1, justifyContent: "center", paddingVertical: Spacing.xl },
   title: { color: Colors.text, fontSize: 30, fontWeight: "800", marginBottom: Spacing.sm },
   subtitle: { color: Colors.textSecondary, fontSize: 15, marginBottom: Spacing.xl, lineHeight: 22 },
   inputCard: {

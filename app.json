@@ -23,6 +23,7 @@
     "android": {
       "icon": "./Rider_Logo_nearNow.png",
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.nearandnow.rider",
       "config": {
         "googleMaps": {

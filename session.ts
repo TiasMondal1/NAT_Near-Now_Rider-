@@ -7,6 +7,11 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export type UserSession = {
   token: string;
   expiresAt: number; // Unix ms timestamp
+  /** OTP verified but /signup/complete not finished yet */
+  needsSignupCompletion?: boolean;
+  signupTicket?: string;
+  /** Local flag set after successful KYC document upload */
+  documentsSubmitted?: boolean;
   user: {
     id: string;
     name: string;
@@ -39,7 +44,7 @@ export async function getSession(): Promise<UserSession | null> {
   }
 }
 
-export async function saveSession(session: Omit<UserSession, 'expiresAt'> & { expiresAt?: number }) {
+export async function saveSession(session: Omit<UserSession, "expiresAt"> & { expiresAt?: number }) {
   const withExpiry: UserSession = {
     ...session,
     expiresAt: session.expiresAt ?? Date.now() + SESSION_TTL_MS,

@@ -1,13 +1,23 @@
 import { Tabs } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { View, Platform, useWindowDimensions } from "react-native";
+import { View, Platform, useWindowDimensions, ActivityIndicator } from "react-native";
 import { Colors } from "../../constants/theme";
 import OfflineBanner from "../../components/OfflineBanner";
+import { useRiderVerificationGate } from "../../lib/useRiderVerificationGate";
 
 export default function TabLayout() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
   const iconSize = isTablet ? 28 : 24;
+  const { checking } = useRiderVerificationGate("require-verified");
+
+  if (checking) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: Colors.bg }}>
+        <ActivityIndicator size="large" color={Colors.accent} />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1 }}>

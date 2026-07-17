@@ -10,15 +10,57 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { saveSession } from "../session";
+import { clearSession, saveSession } from "../session";
+import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 
 const OTP_LENGTH = 6;
+
+type VerifyOtpResponse = {
+  success: boolean;
+  mode?: string;
+  token?: string;
+  phone?: string;
+  signupTicket?: string;
+  user?: {
+    id: string;
+    name: string;
+    role: "customer" | "shopkeeper" | "delivery_partner";
+    isActivated: boolean;
+    phone?: string;
+    email?: string;
+  };
+};
+
+async function hasRegisteredRiderProfile(token: string): Promise<boolean> {
+  try {
+    const profileRes = await apiFetch<{
+      success?: boolean;
+      profile?: {
+        user_id?: string;
+        name?: string;
+        status?: string | null;
+        verification_document?: string | null;
+        address?: string | null;
+      };
+    }>("/delivery-partner/profile", {}, token);
+
+    const profile = profileRes?.profile;
+    if (!profileRes?.success || !profile) return false;
+
+    // Registration and document upload are separate steps. A rider profile
+    // created by /signup/complete counts as registered even before KYC upload.
+    return Boolean(profile.user_id && profile.name);
+  } catch {
+    return false;
+  }
+}
 
 export default function OTPScreen() {
   const router = useRouter();
@@ -85,51 +127,100 @@ export default function OTPScreen() {
     }
   };
 
+  const rejectUnregisteredExistingUser = async () => {
+    await clearSession();
+    Alert.alert(
+      "Not registered",
+      "This phone number is not registered as a delivery partner. Please use New User Registration first.",
+      [{ text: "OK", onPress: () => router.replace("/phone") }]
+    );
+  };
+
   const handleVerify = async (code = otp) => {
     if (code.length !== OTP_LENGTH || loading) return;
     setLoading(true);
     try {
-      const res = await apiFetch<{
-        success: boolean;
-        mode?: string;
-        token?: string;
-        phone?: string;
-        signupTicket?: string;
-        user?: {
-          id: string;
-          name: string;
-          role: "customer" | "shopkeeper" | "delivery_partner";
-          isActivated: boolean;
-          phone?: string;
-          email?: string;
-        };
-      }>("/api/auth/verify-otp", {
+      const res = await apiFetch<VerifyOtpResponse>("/api/auth/verify-otp", {
         method: "POST",
         body: { phone, otp: code, role: "delivery_partner", name: "Delivery Partner" },
       });
 
+      const mode = String(res.mode || "").toLowerCase();
+      const isSignupMode = mode === "signup" || Boolean(res.signupTicket && !res.token);
+      const isDeliveryPartner = res.user?.role === "delivery_partner";
+
+      // ── New registration flow ──────────────────────────────────────────
       if (flow === "new") {
-        // Save the real auth token now so the session survives the signup step
-        // and the profile API calls in home.tsx use a valid bearer token.
+        // Already fully registered → log them in instead of opening signup again
+        if (res.token && isDeliveryPartner) {
+          const registered = await hasRegisteredRiderProfile(res.token);
+          if (registered) {
+            await saveSession({
+              token: res.token,
+              user: {
+                ...res.user!,
+                role: "delivery_partner",
+                isActivated: res.user!.isActivated ?? true,
+              },
+              needsSignupCompletion: false,
+            });
+            router.replace(await resolveAuthenticatedRoute(res.token));
+            return;
+          }
+        }
+
+        // Keep the OTP token — signup/complete needs it (returns 403 without auth).
+        // Mark incomplete so splash/root layout force /signup until registration finishes.
         if (res.token && res.user) {
           await saveSession({
             token: res.token,
-            user: { ...res.user, role: "delivery_partner", isActivated: res.user.isActivated ?? false },
+            user: {
+              ...res.user,
+              role: "delivery_partner",
+              isActivated: res.user.isActivated ?? false,
+              phone: res.user.phone || phone,
+            },
+            needsSignupCompletion: true,
+            signupTicket: res.signupTicket || "",
           });
+        } else {
+          await clearSession();
         }
-        router.replace({ pathname: "/signup", params: { phone: res.phone || phone, signupTicket: res.signupTicket || "" } });
+
+        router.replace({
+          pathname: "/signup",
+          params: {
+            phone: res.phone || phone,
+            signupTicket: res.signupTicket || "",
+          },
+        });
         return;
       }
 
-      if (res.token && res.user?.role === "delivery_partner") {
-        await saveSession({
-          token: res.token,
-          user: { ...res.user, role: "delivery_partner", isActivated: res.user.isActivated ?? true },
-        });
-        router.replace("/(tabs)/home");
-      } else if (res.mode === "signup" || !res.token || res.user?.role !== "delivery_partner") {
-        router.replace({ pathname: "/signup", params: { phone: res.phone || phone, signupTicket: res.signupTicket || "" } });
+      // ── Existing user login flow ───────────────────────────────────────
+      // Unregistered phones must not log in — force New User Registration.
+      if (isSignupMode || !res.token || !isDeliveryPartner) {
+        await rejectUnregisteredExistingUser();
+        return;
       }
+
+      const registered = await hasRegisteredRiderProfile(res.token);
+      if (!registered) {
+        await rejectUnregisteredExistingUser();
+        return;
+      }
+
+      await saveSession({
+        token: res.token,
+        user: {
+          ...res.user!,
+          role: "delivery_partner",
+          isActivated: res.user!.isActivated ?? true,
+        },
+        needsSignupCompletion: false,
+      });
+      // Registered but unverified → pending-verification (docs). Verified → home.
+      router.replace(await resolveAuthenticatedRoute(res.token));
     } catch (err: unknown) {
       const error = err as { error?: string };
       Alert.alert(
@@ -165,71 +256,80 @@ export default function OTPScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.text} />
-        </TouchableOpacity>
-
-        <Animated.View
-          style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
         >
-          <View style={styles.lockIcon}>
-            <MaterialCommunityIcons name="shield-lock-outline" size={32} color={Colors.accent} />
-          </View>
-          <Text style={styles.title}>Verification</Text>
-          <Text style={styles.subtitle}>
-            Enter the 6-digit code sent to{"\n"}
-            <Text style={styles.phoneHighlight}>{phone}</Text>
-          </Text>
-
-          <View style={styles.otpRow}>
-            {digits.map((d, idx) => (
-              <TextInput
-                key={idx}
-                ref={(el) => { inputsRef.current[idx] = el; }}
-                style={[styles.otpInput, d ? styles.otpInputFilled : null]}
-                keyboardType="number-pad"
-                value={d}
-                onChangeText={(v) => handleDigitChange(idx, v)}
-                onKeyPress={({ nativeEvent }) => handleKeyPress(idx, nativeEvent.key)}
-                autoFocus={idx === 0}
-                textContentType="oneTimeCode"
-                autoComplete={idx === 0 ? "sms-otp" : "off"}
-                importantForAutofill={idx === 0 ? "yes" : "no"}
-                selectTextOnFocus
-              />
-            ))}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, !isComplete && styles.buttonDisabled]}
-            onPress={() => handleVerify()}
-            disabled={!isComplete || loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <ActivityIndicator color={Colors.accentText} />
-            ) : (
-              <Text style={styles.buttonText}>Verify Code</Text>
-            )}
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.text} />
           </TouchableOpacity>
 
-          <View style={styles.resendRow}>
-            {countdown > 0 ? (
-              <Text style={styles.resendText}>
-                Resend code in <Text style={styles.timerText}>{countdown}s</Text>
-              </Text>
-            ) : (
-              <TouchableOpacity onPress={handleResend}>
-                <Text style={styles.resendLink}>Resend Code</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </Animated.View>
+          <Animated.View
+            style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+          >
+            <View style={styles.lockIcon}>
+              <MaterialCommunityIcons name="shield-lock-outline" size={32} color={Colors.accent} />
+            </View>
+            <Text style={styles.title}>Verification</Text>
+            <Text style={styles.subtitle}>
+              Enter the 6-digit code sent to{"\n"}
+              <Text style={styles.phoneHighlight}>{phone}</Text>
+            </Text>
+
+            <View style={styles.otpRow}>
+              {digits.map((d, idx) => (
+                <TextInput
+                  key={idx}
+                  ref={(el) => { inputsRef.current[idx] = el; }}
+                  style={[styles.otpInput, d ? styles.otpInputFilled : null]}
+                  keyboardType="number-pad"
+                  value={d}
+                  onChangeText={(v) => handleDigitChange(idx, v)}
+                  onKeyPress={({ nativeEvent }) => handleKeyPress(idx, nativeEvent.key)}
+                  autoFocus={idx === 0}
+                  textContentType="oneTimeCode"
+                  autoComplete={idx === 0 ? "sms-otp" : "off"}
+                  importantForAutofill={idx === 0 ? "yes" : "no"}
+                  selectTextOnFocus
+                />
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, !isComplete && styles.buttonDisabled]}
+              onPress={() => handleVerify()}
+              disabled={!isComplete || loading}
+              activeOpacity={0.8}
+            >
+              {loading ? (
+                <ActivityIndicator color={Colors.accentText} />
+              ) : (
+                <Text style={styles.buttonText}>Verify Code</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.resendRow}>
+              {countdown > 0 ? (
+                <Text style={styles.resendText}>
+                  Resend code in <Text style={styles.timerText}>{countdown}s</Text>
+                </Text>
+              ) : (
+                <TouchableOpacity onPress={handleResend}>
+                  <Text style={styles.resendLink}>Resend Code</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </Animated.View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -237,7 +337,15 @@ export default function OTPScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
-  container: { flex: 1, paddingHorizontal: Spacing.lg, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
+  flex: { flex: 1 },
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 120,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
+  },
   backBtn: {
     marginTop: Spacing.md,
     width: 44,
@@ -247,7 +355,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  content: { flex: 1, justifyContent: "center", marginTop: -60 },
+  content: { flexGrow: 1, justifyContent: "center", paddingVertical: Spacing.xl },
   lockIcon: {
     width: 64,
     height: 64,

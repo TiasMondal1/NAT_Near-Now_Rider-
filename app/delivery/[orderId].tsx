@@ -21,6 +21,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+import { useRiderVerificationGate } from "../../lib/useRiderVerificationGate";
 
 function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
   const R = 6371, r = (d: number) => (d * Math.PI) / 180;
@@ -252,6 +253,7 @@ function PickupStopCard({
 export default function DeliveryScreen() {
   const router = useRouter();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
+  const { checking: verificationChecking } = useRiderVerificationGate("require-verified");
   const [order, setOrder] = useState<ActiveOrder | null>(null);
   const [stops, setStops] = useState<StoreStop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -378,7 +380,7 @@ export default function DeliveryScreen() {
     if (scheme) Linking.openURL(scheme);
   };
 
-  if (loading || !order) {
+  if (verificationChecking || loading || !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={Colors.accent} size="large" />
@@ -412,6 +414,9 @@ export default function DeliveryScreen() {
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -598,7 +603,7 @@ const styles = StyleSheet.create({
   amountText: { color: Colors.accent, fontSize: 14, fontWeight: "700" },
 
   scroll: { flex: 1 },
-  scrollContent: { padding: Spacing.lg, gap: Spacing.md },
+  scrollContent: { padding: Spacing.lg, gap: Spacing.md, paddingBottom: 140 },
 
   sectionLabel: {
     color: Colors.textMuted,
