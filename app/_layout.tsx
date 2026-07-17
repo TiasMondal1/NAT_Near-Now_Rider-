@@ -126,7 +126,8 @@ export default function RootLayout() {
 
       const current = segments[0];
       const inAuthFlow = current === "phone" || current === "otp" || current === "signup";
-      const inProtectedFlow = current === "(tabs)" || current === "delivery";
+      const inProtectedFlow =
+        current === "(tabs)" || current === "delivery" || current === "documents";
 
       if (loggedIn && inAuthFlow) {
         router.replace("/(tabs)/home");

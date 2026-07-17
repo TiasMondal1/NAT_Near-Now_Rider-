@@ -422,6 +422,15 @@ export default function ProfileScreen() {
           )}
 
           <View style={styles.quickActions}>
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/documents")}>
+              <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
+              <View style={styles.quickActionCopy}>
+                <Text style={styles.quickActionText}>Upload Documents</Text>
+                <Text style={styles.quickActionSubtext}>Aadhaar, PAN and vehicle details</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+            <View style={styles.fieldDivider} />
             <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/earnings")}>
               <MaterialCommunityIcons name="chart-line" size={20} color={Colors.accent} />
               <Text style={styles.quickActionText}>View Earnings</Text>
@@ -553,7 +562,9 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     padding: Spacing.lg,
   },
+  quickActionCopy: { flex: 1 },
   quickActionText: { flex: 1, color: Colors.text, fontSize: 15, fontWeight: "600" },
+  quickActionSubtext: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
 
   saveButton: { backgroundColor: Colors.accent, borderRadius: BorderRadius.md, height: 52, alignItems: "center", justifyContent: "center", marginTop: Spacing.sm, marginBottom: Spacing.md, shadowColor: Colors.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 4 },
   saveInner: { flexDirection: "row", alignItems: "center", gap: 8 },
