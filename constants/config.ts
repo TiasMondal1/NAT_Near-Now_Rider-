@@ -30,11 +30,6 @@ export const SUPABASE_CONFIG = {
     process.env.VITE_SUPABASE_ANON_KEY ||
     extra.supabaseAnonKey ||
     "",
-  SERVICE_ROLE_KEY:
-    process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY ||
-    extra.supabaseServiceRoleKey ||
-    "",
 } as const;
 
 // Google Maps Configuration

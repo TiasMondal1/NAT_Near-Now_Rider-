@@ -85,10 +85,6 @@ module.exports = () => {
           process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
           process.env.VITE_SUPABASE_ANON_KEY ||
           "",
-        supabaseServiceRoleKey:
-          process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
-          process.env.VITE_SUPABASE_SERVICE_ROLE_KEY ||
-          "",
         googleMapsApiKey,
       },
     },
