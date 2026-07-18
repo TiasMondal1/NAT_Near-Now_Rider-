@@ -27,17 +27,16 @@ const SPLITS_BLOCK = `
     }`;
 
 const VERSION_CODE_OVERRIDE = `
-// Unique versionCode per ABI so the Play Store accepts all splits simultaneously.
-// Layout (base versionCode = N): universal=N*1000, armeabi-v7a=N*1000+1,
-// arm64-v8a=N*1000+2, x86_64=N*1000+3.
+// Unique versionCode per ABI-split APK so Play can accept all splits.
+// AAB / universal output keeps defaultConfig.versionCode as-is (do NOT *1000),
+// otherwise Play Console sees 1000/2000/… instead of the intended code.
+// ABI layout (base = N): armeabi-v7a=N*1000+1, arm64-v8a=N*1000+2, x86_64=N*1000+3.
 android.applicationVariants.all { variant ->
     variant.outputs.each { output ->
         def abiVersionCodes = ["armeabi-v7a": 1, "arm64-v8a": 2, "x86_64": 3]
         def abi = output.getFilter("ABI")
         if (abi != null) {
             output.versionCodeOverride = android.defaultConfig.versionCode * 1000 + abiVersionCodes[abi]
-        } else {
-            output.versionCodeOverride = android.defaultConfig.versionCode * 1000
         }
     }
 }`;

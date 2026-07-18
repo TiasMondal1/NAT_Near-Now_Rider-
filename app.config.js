@@ -39,6 +39,7 @@ module.exports = () => {
         icon: "./Rider_Logo_nearNow.png",
         edgeToEdgeEnabled: true,
         package: "com.nearandnow.rider",
+        versionCode: 2,
         config: {
           googleMaps: {
             apiKey: googleMapsApiKey,
