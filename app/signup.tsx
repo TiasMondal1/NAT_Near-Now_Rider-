@@ -19,6 +19,14 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/t
 import { apiFetch } from "../constants/api";
 import { clearSession, getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
+import type { VehicleType } from "../lib/riderVerificationDocuments";
+
+const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
+  { value: "cycle", label: "Cycle", icon: "bike" },
+  { value: "e-bike", label: "E-Bike", icon: "bicycle-electric" },
+  { value: "bike", label: "Bike", icon: "motorbike" },
+  { value: "scooty", label: "Scooty", icon: "scooter" },
+];
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -28,6 +36,7 @@ export default function SignupScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
+  const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
   const [loading, setLoading] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -47,7 +56,7 @@ export default function SignupScreen() {
     })();
   }, [phoneParam]);
 
-  const isValid = name.trim().length >= 2;
+  const isValid = name.trim().length >= 2 && !!vehicleType;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const normalizedPhone = String(phone || "").trim();
 
@@ -57,7 +66,7 @@ export default function SignupScreen() {
   };
 
   const handleSignup = async () => {
-    if (!isValid) return;
+    if (!isValid || !vehicleType) return;
     setLoading(true);
     try {
       const session = await getSession();
@@ -78,6 +87,7 @@ export default function SignupScreen() {
             name: name.trim(),
             email: email.trim() || undefined,
             address: address.trim() || undefined,
+            vehicle_type: vehicleType,
           },
         },
         // Bearer from OTP verify — required by backend (403 without it)
@@ -179,6 +189,32 @@ export default function SignupScreen() {
                 onChangeText={setAddress}
               />
 
+              <Text style={styles.label}>Vehicle Type *</Text>
+              <View style={styles.vehicleGrid}>
+                {VEHICLE_OPTIONS.map((vehicle) => {
+                  const active = vehicleType === vehicle.value;
+                  return (
+                    <TouchableOpacity
+                      key={vehicle.value}
+                      style={[styles.vehicleOption, active && styles.vehicleOptionActive]}
+                      onPress={() => setVehicleType(vehicle.value)}
+                      activeOpacity={0.8}
+                    >
+                      <MaterialCommunityIcons
+                        name={vehicle.icon as any}
+                        size={22}
+                        color={active ? Colors.accent : Colors.textMuted}
+                      />
+                      <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
+                        {vehicle.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={styles.vehicleHint}>
+                Vehicle Registration is only required for Bike/Scooty — not Cycle/E-Bike.
+              </Text>
             </View>
 
             <View style={styles.nextStepCard}>
@@ -319,6 +355,23 @@ const styles = StyleSheet.create({
   buttonText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
   inputError: { borderColor: Colors.danger, borderWidth: 1.5 },
   errorHint: { color: Colors.danger, fontSize: 12, marginTop: 4, marginLeft: 2 },
+  vehicleGrid: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm, marginTop: Spacing.sm },
+  vehicleOption: {
+    flexBasis: "47%",
+    flexGrow: 1,
+    height: 76,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  vehicleOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
+  vehicleLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: "600" },
+  vehicleLabelActive: { color: Colors.accentDark },
+  vehicleHint: { color: Colors.textMuted, fontSize: 11, marginTop: Spacing.sm, lineHeight: 15 },
   backRow: { alignItems: "center", marginTop: Spacing.lg },
   backText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
 });

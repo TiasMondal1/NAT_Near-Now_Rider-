@@ -25,7 +25,6 @@ import {
   formatPickedFileSize,
   isVehicleRegistrationRequired,
   saveVerificationDocument,
-  updateVehicleType,
   validateDocNumber,
   type PickedDocFile,
   type RequiredDocKey,
@@ -33,13 +32,6 @@ import {
   type VerificationDocument,
 } from "../lib/riderVerificationDocuments";
 import { fetchRiderProfile } from "../lib/riderVerification";
-
-const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
-  { value: "cycle", label: "Cycle", icon: "bike" },
-  { value: "e-bike", label: "E-Bike", icon: "bicycle-electric" },
-  { value: "bike", label: "Bike", icon: "motorbike" },
-  { value: "scooty", label: "Scooty", icon: "scooter" },
-];
 
 const DOCUMENT_SECTIONS = [
   { key: "aadhaar_front", label: "Aadhaar Card (Front)", icon: "card-account-details-outline" as const, placeholder: "12-digit Aadhaar number", hasNumber: true },
@@ -135,16 +127,6 @@ export default function DocumentsScreen() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const selectVehicleType = async (value: VehicleType) => {
-    setVehicleType(value);
-    if (!token) return;
-    try {
-      await updateVehicleType(token, value);
-    } catch {
-      Alert.alert("Could not save", "Failed to save vehicle type. Please try again.");
-    }
-  };
 
   const groups = ALL_GROUPS.filter(
     (g) => g.groupKey !== "vehicle_registration" || isVehicleRegistrationRequired(vehicleType)
@@ -262,7 +244,10 @@ export default function DocumentsScreen() {
 
   const handleSaveAll = async () => {
     if (!vehicleType) {
-      Alert.alert("Vehicle type required", "Please select your vehicle type before submitting.");
+      Alert.alert(
+        "Vehicle type missing",
+        "Your account is missing a vehicle type. Please contact support to resolve this before submitting."
+      );
       return;
     }
     setSaving(true);
@@ -355,35 +340,6 @@ export default function DocumentsScreen() {
           <Text style={styles.noticeText}>
             After you submit, your account stays locked until an admin approves these documents.
           </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Vehicle Type</Text>
-          <Text style={styles.sectionDescription}>
-            Vehicle Registration is only required for Bike/Scooty — not Cycle/E-Bike.
-          </Text>
-          <View style={styles.vehicleGrid}>
-            {VEHICLE_OPTIONS.map((vehicle) => {
-              const active = vehicleType === vehicle.value;
-              return (
-                <TouchableOpacity
-                  key={vehicle.value}
-                  style={[styles.vehicleOption, active && styles.vehicleOptionActive]}
-                  onPress={() => selectVehicleType(vehicle.value)}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons
-                    name={vehicle.icon as any}
-                    size={24}
-                    color={active ? Colors.accent : Colors.textMuted}
-                  />
-                  <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
-                    {vehicle.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
         </View>
 
         {groups.map((group) => {
@@ -618,22 +574,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   statusBadgeText: { fontSize: 11, fontWeight: "700" },
-  vehicleGrid: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm, marginTop: Spacing.md },
-  vehicleOption: {
-    flexBasis: "47%",
-    flexGrow: 1,
-    height: 76,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-  },
-  vehicleOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
-  vehicleLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: "600" },
-  vehicleLabelActive: { color: Colors.accentDark },
   inputLabel: {
     color: Colors.textSecondary,
     fontSize: 11,
