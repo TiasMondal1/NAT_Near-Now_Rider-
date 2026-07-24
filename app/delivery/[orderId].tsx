@@ -62,6 +62,9 @@ type ActiveOrder = {
   customer_lng: number;
   total_stores: number;
   all_picked_up: boolean;
+  receiver_name?: string | null;
+  receiver_phone?: string | null;
+  receiver_address?: string | null;
 };
 
 function PickupStopCard({
@@ -468,8 +471,15 @@ export default function DeliveryScreen() {
                       <MaterialCommunityIcons name="account" size={24} color={Colors.accent} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.deliveryTitle}>Deliver to Customer</Text>
-                      <Text style={styles.deliveryAddr}>{order.customer_address}</Text>
+                      <Text style={styles.deliveryTitle}>
+                        {order.receiver_name ? `Deliver to ${order.receiver_name}` : 'Deliver to Customer'}
+                      </Text>
+                      {order.receiver_name && (
+                        <Text style={styles.deliveryAddr}>
+                          Order placed for someone else{order.receiver_phone ? ` — ${order.receiver_phone}` : ''}
+                        </Text>
+                      )}
+                      <Text style={styles.deliveryAddr}>{order.receiver_address || order.customer_address}</Text>
                       {driverLat != null && driverLng != null && (
                         <View style={styles.stopDistBadge}>
                           <MaterialCommunityIcons name="map-marker-distance" size={11} color={Colors.accent} />
