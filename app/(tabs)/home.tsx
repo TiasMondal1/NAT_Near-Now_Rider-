@@ -182,9 +182,13 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Poll for verification approval while pending — show in-app banner when approved
+  // Poll while account is anything other than active — covers both
+  // pending_verification -> active (new signup approved) and
+  // suspended/offboarded -> active (reinstated by admin). Previously only
+  // ran for pending_verification, so a suspended rider reinstated while the
+  // app stayed open never found out short of force-quitting and relaunching.
   useEffect(() => {
-    if (driverStatus !== "pending_verification" || !token) {
+    if (!driverStatus || driverStatus === "active" || !token) {
       if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
       return;
     }
@@ -572,12 +576,12 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Verification approved in-app banner */}
+          {/* Shown when status flips to active — either newly verified or reinstated after suspension */}
           {verifiedBanner && (
             <Animated.View style={[styles.verifiedBanner, { opacity: verifiedBannerAnim }]}>
               <MaterialCommunityIcons name="check-circle" size={20} color="#fff" />
               <Text style={styles.verifiedBannerText}>
-                Verification approved! You can now go online.
+                Your account is active! You can now go online.
               </Text>
             </Animated.View>
           )}
