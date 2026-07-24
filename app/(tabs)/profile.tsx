@@ -86,14 +86,16 @@ export default function ProfileScreen() {
 
   const fetchStats = useCallback(async (t: string) => {
     try {
-      const res = await apiFetch<{ success: boolean; orders: { total_amount: number }[] }>(
+      const res = await apiFetch<{ success: boolean; orders: { total_amount: number; payout_amount: number | null }[] }>(
         "/delivery-partner/orders?status=completed",
         {},
         t
       );
       if (res.success) {
         setTotalDeliveries(res.orders.length);
-        setTotalEarnings(res.orders.reduce((sum, o) => sum + Number(o.total_amount) * 0.15, 0));
+        // Real payout amount (flat fee + tip) from delivery_partners_payouts, not
+        // the old hardcoded 15% of total_amount with nothing server-side behind it.
+        setTotalEarnings(res.orders.reduce((sum, o) => sum + (o.payout_amount ?? 0), 0));
       }
     } catch {}
   }, []);

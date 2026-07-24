@@ -24,7 +24,13 @@ type Order = {
   delivery_address: string;
   placed_at: string;
   stores?: { name: string } | null;
+  /** Real payout amount for this order (flat fee + tip), from delivery_partners_payouts.
+   * null for orders delivered before this was wired up — no payout row exists for those. */
+  payout_amount: number | null;
 };
+
+/** Real earnings for this order, or 0 if no payout row exists yet (pre-fix orders). */
+const orderEarning = (o: Order) => o.payout_amount ?? 0;
 
 type Period = "today" | "week" | "all";
 
@@ -87,15 +93,9 @@ export default function EarningsScreen() {
     (o) => new Date(o.placed_at) >= weekAgo
   );
 
-  const todayEarnings = todayOrders.reduce(
-    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
-  );
-  const weekEarnings = weekOrders.reduce(
-    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
-  );
-  const totalEarnings = orders.reduce(
-    (sum, o) => sum + Number(o.total_amount) * 0.15, 0
-  );
+  const todayEarnings = todayOrders.reduce((sum, o) => sum + orderEarning(o), 0);
+  const weekEarnings = weekOrders.reduce((sum, o) => sum + orderEarning(o), 0);
+  const totalEarnings = orders.reduce((sum, o) => sum + orderEarning(o), 0);
 
   const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
   const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
@@ -214,7 +214,7 @@ export default function EarningsScreen() {
                 </View>
                 <View style={styles.earningWrap}>
                   <Text style={styles.earning}>
-                    +{"\u20B9"}{(Number(item.total_amount) * 0.15).toFixed(0)}
+                    {item.payout_amount != null ? `+${"\u20B9"}${item.payout_amount.toFixed(0)}` : "\u2014"}
                   </Text>
                 </View>
               </View>
