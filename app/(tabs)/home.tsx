@@ -24,6 +24,7 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constant
 import { SUPABASE_CONFIG } from "../../constants/config";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
@@ -160,6 +161,12 @@ export default function HomeScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
         Alert.alert("Permission needed", "Location permission is required.");
+      } else {
+        // Requested only after foreground is already granted, and separately
+        // from it (Apple's guidance — asking for "Always" up front hurts grant
+        // rates). Denial isn't fatal: foreground tracking below still works
+        // while the app is open, this only unlocks tracking while backgrounded.
+        await Location.requestBackgroundPermissionsAsync();
       }
 
       try {
@@ -310,21 +317,38 @@ export default function HomeScreen() {
     } catch {}
   }, [token]);
 
-  // When the app comes back to foreground, immediately re-send location so the
-  // driver_locations record stays fresh (Android can freeze background location),
-  // then refresh offers in case new ones landed while the screen was off.
+  // While online, hand location tracking off to the background TaskManager
+  // task the moment the app leaves the foreground, and take it back when it
+  // returns — foreground already tracks via watchPositionAsync (for the live
+  // map + immediate sends), and running both at once would just double-send.
+  // This is the actual fix for the "Always" permission being requested but
+  // never used: previously foreground-only watchPositionAsync + a JS
+  // setInterval heartbeat both froze the moment the app was backgrounded or
+  // the phone locked, so a locked-screen rider mid-delivery went stale in
+  // driver_locations. startBackgroundLocationTracking is a no-op if the
+  // rider never granted "Always" — falls back to the pre-existing
+  // foreground-only behavior with no crash or extra prompt.
   useEffect(() => {
-    if (!isOnline || !token) return;
+    if (!isOnline || !token) {
+      stopBackgroundLocationTracking().catch(() => {});
+      return;
+    }
 
     const handleAppState = (nextState: AppStateStatus) => {
       if (nextState === 'active') {
+        stopBackgroundLocationTracking().catch(() => {});
         sendLastKnownLocation();
         fetchOffers();
+      } else if (nextState === 'background') {
+        startBackgroundLocationTracking().catch(() => {});
       }
     };
 
     const sub = AppState.addEventListener('change', handleAppState);
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      stopBackgroundLocationTracking().catch(() => {});
+    };
   }, [isOnline, token, sendLastKnownLocation, fetchOffers]);
 
   useEffect(() => {

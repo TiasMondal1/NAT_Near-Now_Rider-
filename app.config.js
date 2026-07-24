@@ -25,12 +25,12 @@ module.exports = () => {
       },
       ios: {
         supportsTablet: false,
-        infoPlist: {
-          NSLocationWhenInUseUsageDescription:
-            "We need your location to show your position on the map and update delivery status.",
-          NSLocationAlwaysUsageDescription:
-            "We need your location to track deliveries.",
-        },
+        // Location usage strings now come from the expo-location plugin config
+        // below (locationAlwaysPermission / locationWhenInUsePermission /
+        // locationAlwaysAndWhenInUsePermission) — it also sets
+        // NSLocationAlwaysAndWhenInUseUsageDescription, the modern key iOS
+        // actually prompts with; the two hardcoded strings that used to live
+        // here duplicated (and drifted from) those.
         config: {
           googleMapsApiKey,
         },
@@ -60,7 +60,14 @@ module.exports = () => {
           "expo-location",
           {
             locationAlwaysAndWhenInUsePermission:
-              "Allow Near & Now to use your location for delivery tracking.",
+              "Allow Near & Now to use your location for delivery tracking, even while the app is in the background during an active delivery.",
+            locationAlwaysPermission:
+              "Near & Now uses your location in the background so dispatch can keep tracking your delivery when your phone is locked.",
+            locationWhenInUsePermission:
+              "We need your location to show your position on the map and update delivery status.",
+            isIosBackgroundLocationEnabled: true,
+            isAndroidBackgroundLocationEnabled: true,
+            isAndroidForegroundServiceEnabled: true,
           },
         ],
         [

@@ -9,6 +9,11 @@ import { getSession } from "../session";
 import { apiFetch, setSessionExpiredHandler } from "../constants/api";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+// Side-effect import: registers the background location TaskManager task at
+// module load, before any component mounts. Required so a location update
+// that relaunches the app after it was killed still has a task definition
+// to run against — defining it lazily inside a screen would be too late.
+import "../lib/backgroundLocationTask";
 
 // expo-notifications is unsupported in Expo Go (SDK 53+); skip in that environment
 const isExpoGo = Constants.executionEnvironment === "storeClient";
