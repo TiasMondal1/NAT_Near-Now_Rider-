@@ -19,7 +19,7 @@ import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
-import { getSession, clearSession, UserSession } from "../../session";
+import { getSession, clearSession } from "../../session";
 import { uploadRiderImage, uploadVehicleImage } from "../../lib/storage";
 
 type Profile = {
@@ -37,62 +37,11 @@ type Profile = {
   created_at: string;
 };
 
-type DeliveryPartnerListItem = {
-  id: string;
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  created_at?: string;
-  profile?: {
-    user_id?: string;
-    phone?: string | null;
-    address?: string | null;
-    verification_document?: string | null;
-    verification_number?: string | null;
-    is_online?: boolean;
-    profile_image_url?: string | null;
-    created_at?: string;
-  } | null;
-};
-
-const normalizePhone = (value?: string | null) => String(value || "").replace(/\D/g, "");
-
-const mapPartnerToProfile = (partner: DeliveryPartnerListItem): Profile => ({
-  user_id: partner.profile?.user_id || partner.id,
-  name: partner.name || "Delivery Partner",
-  email: partner.email || null,
-  phone: partner.phone || partner.profile?.phone || "",
-  address: partner.profile?.address || null,
-  verification_document: partner.profile?.verification_document || null,
-  verification_number: partner.profile?.verification_number || null,
-  is_online: Boolean(partner.profile?.is_online),
-  profile_image_url: partner.profile?.profile_image_url || null,
-  vehicle_image_url: null,
-  vehicle_type: null,
-  created_at: partner.profile?.created_at || partner.created_at || "",
-});
-
-const findPartnerForSession = (partners: DeliveryPartnerListItem[], session: UserSession) => {
-  const sessionId = String(session.user?.id || "");
-  const sessionPhone = normalizePhone(session.user?.phone);
-
-  return partners.find((partner) => {
-    const partnerId = String(partner.id || "");
-    const userId = String(partner.profile?.user_id || "");
-    const appUserPhone = normalizePhone(partner.phone);
-    const profilePhone = normalizePhone(partner.profile?.phone);
-
-    return (
-      (sessionId && (partnerId === sessionId || userId === sessionId)) ||
-      (sessionPhone && (appUserPhone === sessionPhone || profilePhone === sessionPhone))
-    );
-  });
-};
-
 export default function ProfileScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -114,7 +63,7 @@ export default function ProfileScreen() {
     ]).start();
   }, []);
 
-  const fetchProfile = useCallback(async (t: string, session: UserSession) => {
+  const fetchProfile = useCallback(async (t: string) => {
     try {
       const profileRes = await apiFetch<{ success: boolean; profile: Profile }>(
         "/delivery-partner/profile",
@@ -126,20 +75,13 @@ export default function ProfileScreen() {
         setName(profileRes.profile.name);
         setEmail(profileRes.profile.email || "");
         setAddress(profileRes.profile.address || "");
+        setLoadError(false);
         return;
       }
-
-      // Fallback
-      const partners = await apiFetch<DeliveryPartnerListItem[]>("/api/delivery/partners");
-      const matchedPartner = findPartnerForSession(partners, session);
-      if (matchedPartner) {
-        const mappedProfile = mapPartnerToProfile(matchedPartner);
-        setProfile(mappedProfile);
-        setName(mappedProfile.name);
-        setEmail(mappedProfile.email || "");
-        setAddress(mappedProfile.address || "");
-      }
-    } catch {}
+      setLoadError(true);
+    } catch {
+      setLoadError(true);
+    }
   }, []);
 
   const fetchStats = useCallback(async (t: string) => {
@@ -164,7 +106,7 @@ export default function ProfileScreen() {
         return;
       }
       setToken(session.token);
-      await Promise.all([fetchProfile(session.token, session), fetchStats(session.token)]);
+      await Promise.all([fetchProfile(session.token), fetchStats(session.token)]);
       setLoading(false);
     })();
   }, [fetchProfile, fetchStats]);
@@ -310,6 +252,27 @@ export default function ProfileScreen() {
     return (
       <SafeAreaView style={styles.centered}>
         <ActivityIndicator color={Colors.accent} size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  if (loadError && !profile) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <Text style={{ color: Colors.text, fontSize: 15, marginBottom: Spacing.md }}>
+          Couldn't load your profile.
+        </Text>
+        <TouchableOpacity
+          style={styles.editBtn}
+          onPress={async () => {
+            setLoading(true);
+            const session = await getSession();
+            if (session?.token) await fetchProfile(session.token);
+            setLoading(false);
+          }}
+        >
+          <Text style={styles.editBtnText}>Retry</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
