@@ -16,6 +16,8 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { clearSession, getSession } from "../session";
 import { checkRiderVerification } from "../lib/riderVerification";
+import { supabase } from "../lib/supabase";
+import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
 
@@ -40,6 +42,7 @@ export default function PendingVerificationScreen() {
   const { checking, profile, documents, documentsUploaded } = useRiderVerificationGate("require-pending");
   const [refreshing, setRefreshing] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -79,11 +82,50 @@ export default function PendingVerificationScreen() {
 
   useEffect(() => {
     void checkApprovalNow(true);
+    // Fallback poll — the Realtime subscription below delivers near-instantly
+    // once connected; this covers a session with no Supabase Auth bridge
+    // session (mint failed at login/signup) or while it's still connecting.
     pollRef.current = setInterval(() => {
       void checkApprovalNow(true);
     }, 10_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [checkApprovalNow]);
+
+  // Realtime: near-instant notice the moment an admin approves this rider,
+  // via the narrowly-scoped Supabase Auth bridge session the backend mints
+  // at login/signup solely so Realtime's RLS check (auth.uid()) has
+  // something real to evaluate for this rider's own row — see
+  // riderAuthBridge.service.ts / partner_own_record RLS policy. Absent
+  // session.supabaseSession just means the mint failed server-side; the poll
+  // above still covers that case.
+  useEffect(() => {
+    let cancelled = false;
+    restoreRiderRealtimeSession(supabase).then((driverUserId) => {
+      if (cancelled || !driverUserId) return;
+
+      realtimeChannelRef.current = supabase
+        .channel(`rider-status:${driverUserId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "delivery_partners",
+            filter: `user_id=eq.${driverUserId}`,
+          },
+          () => {
+            void checkApprovalNow(true);
+          }
+        )
+        .subscribe();
+    });
+
+    return () => {
+      cancelled = true;
+      realtimeChannelRef.current?.unsubscribe();
+      realtimeChannelRef.current = null;
     };
   }, [checkApprovalNow]);
 

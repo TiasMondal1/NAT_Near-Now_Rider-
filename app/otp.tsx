@@ -28,6 +28,7 @@ type VerifyOtpResponse = {
   token?: string;
   phone?: string;
   signupTicket?: string;
+  supabaseSession?: { access_token: string; refresh_token: string };
   user?: {
     id: string;
     name: string;
@@ -37,6 +38,12 @@ type VerifyOtpResponse = {
     email?: string;
   };
 };
+
+function toStoredSupabaseSession(supabaseSession?: { access_token: string; refresh_token: string }) {
+  return supabaseSession
+    ? { accessToken: supabaseSession.access_token, refreshToken: supabaseSession.refresh_token }
+    : undefined;
+}
 
 async function hasRegisteredRiderProfile(token: string): Promise<boolean> {
   try {
@@ -157,6 +164,7 @@ export default function OTPScreen() {
           if (registered) {
             await saveSession({
               token: res.token,
+              supabaseSession: toStoredSupabaseSession(res.supabaseSession),
               user: {
                 ...res.user!,
                 role: "delivery_partner",
@@ -212,6 +220,7 @@ export default function OTPScreen() {
 
       await saveSession({
         token: res.token,
+        supabaseSession: toStoredSupabaseSession(res.supabaseSession),
         user: {
           ...res.user!,
           role: "delivery_partner",

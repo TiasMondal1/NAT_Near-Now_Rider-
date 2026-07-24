@@ -25,6 +25,7 @@ import { SUPABASE_CONFIG } from "../../constants/config";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
+import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
@@ -108,6 +109,7 @@ export default function HomeScreen() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const statusRealtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -197,8 +199,20 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!driverStatus || driverStatus === "active" || !token) {
       if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      statusRealtimeChannelRef.current?.unsubscribe();
+      statusRealtimeChannelRef.current = null;
       return;
     }
+
+    const applyActiveStatus = () => {
+      setDriverStatus("active");
+      setVerifiedBanner(true);
+      Animated.sequence([
+        Animated.timing(verifiedBannerAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.delay(4000),
+        Animated.timing(verifiedBannerAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
+      ]).start(() => setVerifiedBanner(false));
+    };
 
     const checkVerification = async () => {
       try {
@@ -206,28 +220,50 @@ export default function HomeScreen() {
           "/delivery-partner/profile", {}, token
         );
         const newStatus = profileRes.profile.status ?? "";
-        if (newStatus === "active") {
-          setDriverStatus("active");
-          setVerifiedBanner(true);
-          Animated.sequence([
-            Animated.timing(verifiedBannerAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
-            Animated.delay(4000),
-            Animated.timing(verifiedBannerAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
-          ]).start(() => setVerifiedBanner(false));
-        }
+        if (newStatus === "active") applyActiveStatus();
       } catch {}
     };
 
-    // Genuine realtime isn't safely achievable here: Supabase Realtime's RLS
-    // scoping requires a real Supabase Auth session (auth.uid()), and this app
-    // uses its own custom phone-OTP login instead — there's no way to tell
-    // Realtime "only broadcast this rider's own row" without either exposing
-    // every rider's data to the public anon key, or migrating the whole login
-    // system to Supabase Auth (a much bigger change than this fix). Shortened
-    // the poll instead as a safe, lower-latency improvement.
+    // Fallback poll — the Realtime subscription below delivers near-instantly
+    // when it's connected; this covers the gap for a session that never got
+    // a Supabase Auth bridge session (mint failed at login) or while the
+    // subscription itself is still (re)connecting.
     statusPollRef.current = setInterval(checkVerification, 10000);
+
+    // Realtime: near-instant notice the moment an admin flips this rider's
+    // status. Needs a real Supabase Auth session, since Realtime's RLS check
+    // only ever evaluates auth.uid() — this app's own custom phone-OTP login
+    // never populates that, so the backend mints a narrowly-scoped bridge
+    // session at login solely for this (see riderAuthBridge.service.ts /
+    // partner_own_record RLS policy). If that mint failed, session.supabaseSession
+    // is simply absent and this is skipped — the poll above still covers it.
+    let cancelled = false;
+    restoreRiderRealtimeSession(supabase).then((driverUserId) => {
+      if (cancelled || !driverUserId) return;
+
+      statusRealtimeChannelRef.current = supabase
+        .channel(`rider-status:${driverUserId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "delivery_partners",
+            filter: `user_id=eq.${driverUserId}`,
+          },
+          (payload) => {
+            const newStatus = (payload.new as { status?: string })?.status ?? "";
+            if (newStatus === "active") applyActiveStatus();
+          }
+        )
+        .subscribe();
+    });
+
     return () => {
+      cancelled = true;
       if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      statusRealtimeChannelRef.current?.unsubscribe();
+      statusRealtimeChannelRef.current = null;
     };
   }, [driverStatus, token, verifiedBannerAnim]);
 

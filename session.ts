@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 
 const SESSION_KEY = "nearandnow_delivery_session";
 const TOKEN_KEY = "nearandnow_rider_token";
+const SUPABASE_SESSION_KEY = "nearandnow_rider_supabase_session";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -14,6 +15,18 @@ export type UserSession = {
   signupTicket?: string;
   /** Local flag set after successful KYC document upload */
   documentsSubmitted?: boolean;
+  /**
+   * A real, narrowly-scoped Supabase Auth session minted by the backend at
+   * login (see backend/src/services/riderAuthBridge.service.ts) — used only
+   * to populate auth.uid() so this rider's own delivery_partners row can be
+   * subscribed to via Realtime. Never used for this app's own API calls,
+   * which stay on `token` above. Optional: absent if the mint failed
+   * server-side (non-fatal — the app just falls back to polling).
+   */
+  supabaseSession?: {
+    accessToken: string;
+    refreshToken: string;
+  };
   user: {
     id: string;
     name: string;
@@ -59,7 +72,15 @@ export async function getSession(): Promise<UserSession | null> {
       return null;
     }
 
-    const session: UserSession = { ...(rest as Omit<UserSession, 'token'>), token };
+    let supabaseSession: UserSession['supabaseSession'];
+    try {
+      const raw = await SecureStore.getItemAsync(SUPABASE_SESSION_KEY);
+      if (raw) supabaseSession = JSON.parse(raw);
+    } catch {
+      supabaseSession = undefined;
+    }
+
+    const session: UserSession = { ...(rest as Omit<UserSession, 'token'>), token, supabaseSession };
 
     if (session.expiresAt && Date.now() > session.expiresAt) {
       await clearSession();
@@ -85,9 +106,12 @@ export async function saveSession(session: Omit<UserSession, "expiresAt"> & { ex
   // rooted/jailbroken device or a device backup extraction. Everything else
   // (user id/name/role, expiry, signup flags) is non-sensitive and stays in
   // AsyncStorage.
-  const { token, ...rest } = withExpiry;
+  const { token, supabaseSession, ...rest } = withExpiry;
   await Promise.all([
     SecureStore.setItemAsync(TOKEN_KEY, token),
+    supabaseSession
+      ? SecureStore.setItemAsync(SUPABASE_SESSION_KEY, JSON.stringify(supabaseSession))
+      : SecureStore.deleteItemAsync(SUPABASE_SESSION_KEY).catch(() => {}),
     AsyncStorage.setItem(SESSION_KEY, JSON.stringify(rest)),
   ]);
 }
@@ -96,6 +120,7 @@ export async function clearSession() {
   _cache = null;
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(SUPABASE_SESSION_KEY).catch(() => {}),
     AsyncStorage.removeItem(SESSION_KEY),
   ]);
 }

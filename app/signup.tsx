@@ -77,6 +77,7 @@ export default function SignupScreen() {
         error?: string;
         token?: string;
         user?: { id: string; name?: string; phone?: string; email?: string };
+        supabaseSession?: { access_token: string; refresh_token: string };
       }>(
         "/delivery-partner/signup/complete",
         {
@@ -101,6 +102,9 @@ export default function SignupScreen() {
 
       await saveSession({
         token: res.token,
+        supabaseSession: res.supabaseSession
+          ? { accessToken: res.supabaseSession.access_token, refreshToken: res.supabaseSession.refresh_token }
+          : undefined,
         user: {
           id: res.user.id,
           name: res.user.name || name.trim() || "Delivery Partner",
