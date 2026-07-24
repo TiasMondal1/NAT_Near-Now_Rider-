@@ -90,6 +90,10 @@ export default function HomeScreen() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
+  // Synchronous in-flight guard: `accepting` state only disables the button
+  // after React commits the re-render, so a fast double-tap can fire
+  // handleAcceptOffer twice before that happens. A ref updates immediately.
+  const acceptingRef = useRef(false);
   const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
   const [token, setToken] = useState("");
   const [userName, setUserName] = useState("");
@@ -504,6 +508,8 @@ export default function HomeScreen() {
   };
 
   const handleAcceptOffer = async (offerId: string) => {
+    if (acceptingRef.current) return;
+    acceptingRef.current = true;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setAccepting(offerId);
     try {
@@ -523,6 +529,7 @@ export default function HomeScreen() {
     } catch {
       Alert.alert("Error", "Failed to accept order. Please try again.");
     } finally {
+      acceptingRef.current = false;
       setAccepting(null);
     }
   };
