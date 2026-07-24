@@ -8,6 +8,7 @@ import { validateConfig } from "../constants/config";
 import { getSession } from "../session";
 import { apiFetch, setSessionExpiredHandler } from "../constants/api";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 // expo-notifications is unsupported in Expo Go (SDK 53+); skip in that environment
 const isExpoGo = Constants.executionEnvironment === "storeClient";
@@ -163,15 +164,17 @@ export default function RootLayout() {
   }, [authReady, segments, router]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <StatusBar style="dark" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: Colors.bg },
-          animation: "slide_from_right",
-        }}
-      />
-    </View>
+    <ErrorBoundary>
+      <View style={{ flex: 1, backgroundColor: Colors.bg }}>
+        <StatusBar style="dark" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: Colors.bg },
+            animation: "slide_from_right",
+          }}
+        />
+      </View>
+    </ErrorBoundary>
   );
 }
