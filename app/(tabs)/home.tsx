@@ -426,8 +426,15 @@ export default function HomeScreen() {
     }
 
     // We need the rider's user_id to filter. Grab it from the session.
+    // `cancelled` guards against isOnline flipping false again (or the
+    // effect re-running for another dep) while this await is in flight —
+    // without it, a channel created after cancellation was orphaned:
+    // subscribed and live, but never assigned anywhere the cleanup below
+    // could find and unsubscribe it. Same pattern already used by the
+    // rider-status effect above.
+    let cancelled = false;
     getSession().then((session) => {
-      if (!session?.user?.id) return;
+      if (cancelled || !session?.user?.id) return;
       const driverId = session.user.id;
 
       realtimeChannelRef.current = supabase
@@ -468,6 +475,7 @@ export default function HomeScreen() {
     });
 
     return () => {
+      cancelled = true;
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
     };
