@@ -81,7 +81,7 @@ export default function PendingVerificationScreen() {
     void checkApprovalNow(true);
     pollRef.current = setInterval(() => {
       void checkApprovalNow(true);
-    }, 30_000);
+    }, 10_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };

@@ -211,7 +211,14 @@ export default function HomeScreen() {
       } catch {}
     };
 
-    statusPollRef.current = setInterval(checkVerification, 30000);
+    // Genuine realtime isn't safely achievable here: Supabase Realtime's RLS
+    // scoping requires a real Supabase Auth session (auth.uid()), and this app
+    // uses its own custom phone-OTP login instead — there's no way to tell
+    // Realtime "only broadcast this rider's own row" without either exposing
+    // every rider's data to the public anon key, or migrating the whole login
+    // system to Supabase Auth (a much bigger change than this fix). Shortened
+    // the poll instead as a safe, lower-latency improvement.
+    statusPollRef.current = setInterval(checkVerification, 10000);
     return () => {
       if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
     };
