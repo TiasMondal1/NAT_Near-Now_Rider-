@@ -371,14 +371,6 @@ export default function ProfileScreen() {
               <Text style={styles.statValue}>{"₹"}{totalEarnings.toFixed(0)}</Text>
               <Text style={styles.statLabel}>Earned</Text>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <View style={[styles.statIconWrap, { backgroundColor: Colors.warningLight }]}>
-                <MaterialCommunityIcons name="star" size={18} color={Colors.warning} />
-              </View>
-              <Text style={styles.statValue}>4.8</Text>
-              <Text style={styles.statLabel}>Rating</Text>
-            </View>
           </View>
 
           <View style={styles.infoCard}>
