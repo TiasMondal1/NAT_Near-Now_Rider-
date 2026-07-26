@@ -271,12 +271,16 @@ export default function HomeScreen() {
     };
   }, [driverStatus, token, verifiedBannerAnim]);
 
-  const sendLocation = useCallback(async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null) => {
+  // timestamp is the GPS fix's own capture time (ms since epoch), not when
+  // it's sent — lets the backend reject a stale cached fix even though it
+  // would otherwise look "fresh" via driver_locations.updated_at (server
+  // receipt time). See deliveryPartner.controller.ts's updateLocation.
+  const sendLocation = useCallback(async (lat: number, lng: number, heading: number | null, speed: number | null, accuracy: number | null, timestamp: number | null) => {
     if (!token) return;
     try {
       await apiFetch(
         "/delivery-partner/location",
-        { method: "POST", body: { latitude: lat, longitude: lng, heading, speed, accuracy } },
+        { method: "POST", body: { latitude: lat, longitude: lng, heading, speed, accuracy, timestamp } },
         token
       );
     } catch {}
@@ -287,7 +291,7 @@ export default function HomeScreen() {
     try {
       const loc = await Location.getLastKnownPositionAsync();
       if (loc) {
-        sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+        sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
       }
     } catch {}
   }, [sendLocation]);
@@ -305,7 +309,7 @@ export default function HomeScreen() {
         { accuracy: Location.Accuracy.High, distanceInterval: 50, timeInterval: 10000 },
         (loc) => {
           setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
         }
       );
     })();
@@ -500,7 +504,7 @@ export default function HomeScreen() {
         try {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-          await sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null);
+          await sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
         } catch {
           await sendLastKnownLocation();
         }

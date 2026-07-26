@@ -27,6 +27,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
           heading: loc.coords.heading ?? null,
           speed: loc.coords.speed ?? null,
           accuracy: loc.coords.accuracy ?? null,
+          // GPS fix's own capture time, not send time — lets the backend
+          // reject a stale fix even though server-receipt time would
+          // otherwise make it look current. See home.tsx's sendLocation.
+          timestamp: loc.timestamp ?? null,
         },
       },
       session.token
