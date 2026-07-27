@@ -22,8 +22,10 @@
  *
  * This supersedes the rider's previous profile-photo flow (base64 POST to
  * PATCH /delivery-partner/profile-image, writing to the rider-avatars
- * bucket) for consistency with the shopkeeper build — that old bucket is
- * left orphaned, not deleted.
+ * bucket) for consistency with the shopkeeper build — that old route is
+ * still live (kept intentionally, not removed) with a real bucket now
+ * backing it (created 2026-07-27, having never actually existed before
+ * that), but this app's own upload path no longer calls it.
  */
 
 import { supabase } from './supabase';
