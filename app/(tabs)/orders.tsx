@@ -27,9 +27,16 @@ type Order = {
   order_items?: { product_name: string; quantity: number }[];
 };
 
+// Must mirror mapDbStatusToRider() in backend/src/controllers/deliveryPartner.controller.ts —
+// that function only ever returns rider_assigned/picking_up/picked_up/completed
+// (or a raw, unmapped DB status as a last-resort fallback). en_route_delivery
+// was never actually emitted; picking_up/picked_up were missing here entirely
+// and fell through to the generic default below, showing the raw status
+// string with an unstyled help-circle icon.
 const STATUS_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
   rider_assigned: { label: "Pickup", icon: "store", color: Colors.accent, bg: Colors.accentLight },
-  en_route_delivery: { label: "Delivering", icon: "truck-delivery", color: Colors.warning, bg: Colors.warningLight },
+  picking_up: { label: "Picking Up", icon: "moped", color: Colors.warning, bg: Colors.warningLight },
+  picked_up: { label: "Delivering", icon: "truck-delivery", color: Colors.warning, bg: Colors.warningLight },
   completed: { label: "Delivered", icon: "check-circle", color: Colors.success, bg: Colors.successLight },
 };
 
