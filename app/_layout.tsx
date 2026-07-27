@@ -9,6 +9,8 @@ import { getSession } from "../session";
 import { apiFetch, setSessionExpiredHandler } from "../constants/api";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { useProfileChangeOutcomeGate } from "../lib/useProfileChangeOutcomeGate";
+import ProfileChangeOutcomeModal from "../components/ProfileChangeOutcomeModal";
 // Side-effect import: registers the background location TaskManager task at
 // module load, before any component mounts. Required so a location update
 // that relaunches the app after it was killed still has a task definition
@@ -168,6 +170,11 @@ export default function RootLayout() {
     return () => { mounted = false; };
   }, [authReady, segments, router]);
 
+  // Mounted once above the whole Stack (not inside a single screen) so a
+  // profile-change outcome is surfaced no matter which tab/screen the rider
+  // happens to be on when the admin reviews it.
+  const { outcome, dismiss } = useProfileChangeOutcomeGate();
+
   return (
     <ErrorBoundary>
       <View style={{ flex: 1, backgroundColor: Colors.bg }}>
@@ -179,6 +186,7 @@ export default function RootLayout() {
             animation: "slide_from_right",
           }}
         />
+        <ProfileChangeOutcomeModal outcome={outcome} onDismiss={dismiss} />
       </View>
     </ErrorBoundary>
   );
