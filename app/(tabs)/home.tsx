@@ -19,6 +19,7 @@ import { useRouter } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { createClient } from "@supabase/supabase-js";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { SUPABASE_CONFIG } from "../../constants/config";
@@ -28,6 +29,13 @@ import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from 
 import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
+
+// "Ignore" is a soft, personal, this-device-only dismissal — not a real
+// business-level rejection (other riders still see the offer, and it still
+// re-expires/reassigns server-side on its own timeout). So it belongs in
+// AsyncStorage, not a driver_order_offers status column, which would risk
+// colliding with the real accept/expire/reassign state machine there.
+const IGNORED_OFFERS_KEY = "rider_ignored_offer_ids";
 
 type OfferStore = {
   store_id: string;
@@ -95,6 +103,10 @@ export default function HomeScreen() {
   // handleAcceptOffer twice before that happens. A ref updates immediately.
   const acceptingRef = useRef(false);
   const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
+  // Guards the persist effect below from firing (and overwriting real
+  // storage with an empty set) before the initial AsyncStorage read below
+  // has actually completed.
+  const ignoredOffersLoadedRef = useRef(false);
   // Both polls previously swallowed every failure into an empty catch {},
   // so a rider online during a degraded-but-reachable backend saw the exact
   // same "No orders right now" as someone genuinely idle, with no way to
@@ -142,6 +154,32 @@ export default function HomeScreen() {
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
+
+  // Restore this device's previously-ignored offer ids so a dismissed offer
+  // doesn't reappear after an app restart (previously this state was
+  // in-memory only and reset every launch).
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(IGNORED_OFFERS_KEY);
+        if (raw) {
+          const ids: string[] = JSON.parse(raw);
+          if (Array.isArray(ids)) setIgnoredOfferIds(new Set(ids));
+        }
+      } catch {
+        // Malformed or unreadable storage — fall back to an empty set
+      } finally {
+        ignoredOffersLoadedRef.current = true;
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!ignoredOffersLoadedRef.current) return;
+    AsyncStorage.setItem(IGNORED_OFFERS_KEY, JSON.stringify([...ignoredOfferIds])).catch(() => {
+      // Non-critical — worst case an ignored offer reappears after restart
+    });
+  }, [ignoredOfferIds]);
 
   useEffect(() => {
     if (!token) return;
