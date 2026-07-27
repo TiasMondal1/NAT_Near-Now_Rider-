@@ -429,9 +429,14 @@ export default function HomeScreen() {
     if (!token) return;
 
     // Active orders must always be polled — a simulation or manual dispatch can
-    // assign an order even when the driver is marked offline in the app.
+    // assign an order even when the driver is marked offline in the app. But a
+    // rider deliberately offline doesn't need that caught within 6s — a manual
+    // dispatch onto an offline driver is a rare admin action, not something
+    // needing near-instant detection — so slow way down (45s) rather than
+    // draining battery/network at the same cadence as an actively-online rider.
+    const ACTIVE_ORDER_INTERVAL_MS = isOnline ? 6000 : 45000;
     fetchActiveOrder();
-    const activeOrderInterval = setInterval(fetchActiveOrder, 6000);
+    const activeOrderInterval = setInterval(fetchActiveOrder, ACTIVE_ORDER_INTERVAL_MS);
 
     if (!isOnline) {
       if (pollRef.current) clearInterval(pollRef.current);
