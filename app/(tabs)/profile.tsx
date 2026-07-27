@@ -53,6 +53,20 @@ export default function ProfileScreen() {
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
 
+  // name/email/address edits now go through admin review instead of applying
+  // immediately — see requestProfileChange() on the backend. pendingRef
+  // mirrors the state for the transition check in loadPendingChangeRequest
+  // without reading state inside a setState updater (a real side effect
+  // there would violate React's purity requirement for updaters — see the
+  // shopkeeper app's equivalent fix for why). pollSeqRef guards against an
+  // in-flight poll resolving out of order and clobbering fresher state.
+  const [pendingChangeRequest, setPendingChangeRequest] = useState<{
+    id: string;
+    changes: Record<string, { old: string | null; new: string }>;
+  } | null>(null);
+  const pendingChangeRequestRef = useRef<typeof pendingChangeRequest>(null);
+  const pollSeqRef = useRef(0);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
 
@@ -100,6 +114,45 @@ export default function ProfileScreen() {
     } catch {}
   }, []);
 
+  const loadPendingChangeRequest = useCallback(async (t: string) => {
+    // Stale-response guard: only the most recently-issued fetch's result is
+    // ever applied, so an earlier poll tick's response can't clobber fresher
+    // state (e.g. one issued just before a submit, resolving just after).
+    const seq = ++pollSeqRef.current;
+    try {
+      const res = await apiFetch<{ success: boolean; request: typeof pendingChangeRequest }>(
+        "/delivery-partner/profile-change-request",
+        {},
+        t
+      );
+      if (seq !== pollSeqRef.current) return;
+      if (!res.success) return;
+
+      const nextRequest = res.request ?? null;
+      const prev = pendingChangeRequestRef.current;
+      pendingChangeRequestRef.current = nextRequest;
+      setPendingChangeRequest(nextRequest);
+
+      // A previously-pending request just resolved (approved/rejected) —
+      // re-fetch the profile so an approved name/email/address shows up
+      // without needing to leave and re-enter this screen.
+      if (prev && !nextRequest) {
+        fetchProfile(t).catch(() => {});
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }, [fetchProfile]);
+
+  // While a change request is pending, poll for the admin's decision so the
+  // banner clears (and the approved values refresh in) without needing to
+  // leave and re-enter this screen.
+  useEffect(() => {
+    if (!pendingChangeRequest || !token) return;
+    const interval = setInterval(() => loadPendingChangeRequest(token), 20_000);
+    return () => clearInterval(interval);
+  }, [pendingChangeRequest, token, loadPendingChangeRequest]);
+
   useEffect(() => {
     (async () => {
       const session = await getSession();
@@ -108,15 +161,22 @@ export default function ProfileScreen() {
         return;
       }
       setToken(session.token);
-      await Promise.all([fetchProfile(session.token), fetchStats(session.token)]);
+      await Promise.all([
+        fetchProfile(session.token),
+        fetchStats(session.token),
+        loadPendingChangeRequest(session.token),
+      ]);
       setLoading(false);
     })();
-  }, [fetchProfile, fetchStats]);
+  }, [fetchProfile, fetchStats, loadPendingChangeRequest]);
 
   useFocusEffect(
     useCallback(() => {
-      if (token) fetchStats(token);
-    }, [token, fetchStats])
+      if (token) {
+        fetchStats(token);
+        loadPendingChangeRequest(token);
+      }
+    }, [token, fetchStats, loadPendingChangeRequest])
   );
 
   // Uploads directly to the delivery_partner_image bucket (anon-direct, same
@@ -211,27 +271,42 @@ export default function ProfileScreen() {
         return;
       }
 
-      const res = await apiFetch<{ success: boolean; profile: Profile }>(
-        "/delivery-partner/profile",
-        {
-          method: "PATCH",
-          body: {
-            name: name.trim() || "Delivery Partner",
-            email: email.trim() || undefined,
-            address: address.trim() || undefined,
-          },
-        },
+      const patch: Record<string, string> = {};
+      const trimmedName = name.trim() || "Delivery Partner";
+      if (trimmedName !== (profile?.name ?? "")) patch.name = trimmedName;
+      if (email.trim() !== (profile?.email ?? "")) patch.email = email.trim();
+      if (address.trim() !== (profile?.address ?? "")) patch.address = address.trim();
+
+      if (Object.keys(patch).length === 0) {
+        setEditing(false);
+        return;
+      }
+
+      // Name/email/address no longer apply immediately — they go through
+      // admin review (requestProfileChange on the backend). Revert the
+      // visible fields to the still-current approved values; the pending
+      // banner below shows what was actually submitted.
+      const res = await apiFetch<{ success: boolean; request: typeof pendingChangeRequest; error?: string }>(
+        "/delivery-partner/profile-change-request",
+        { method: "POST", body: patch },
         token
       );
-      if (res.success) {
-        setProfile(res.profile);
-        setName(res.profile.name);
-        setEmail(res.profile.email || "");
-        setAddress(res.profile.address || "");
-        setEditing(false);
+      if (!res.success) {
+        throw new Error(res.error || "Failed to submit changes");
       }
-    } catch {
-      Alert.alert("Error", "Failed to save profile.");
+
+      pollSeqRef.current++; // invalidate any in-flight poll issued before this submit
+      pendingChangeRequestRef.current = res.request;
+      setPendingChangeRequest(res.request);
+      if (profile) {
+        setName(profile.name);
+        setEmail(profile.email || "");
+        setAddress(profile.address || "");
+      }
+      setEditing(false);
+      Alert.alert("Submitted for review", "Your requested changes have been sent to the admin team and will apply once approved.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to save profile.");
     }
     setSaving(false);
   };
@@ -372,6 +447,20 @@ export default function ProfileScreen() {
               <Text style={styles.statLabel}>Earned</Text>
             </View>
           </View>
+
+          {pendingChangeRequest && (
+            <View style={styles.pendingBanner}>
+              <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.warning} />
+              <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                <Text style={styles.pendingBannerTitle}>Changes pending admin review</Text>
+                {Object.entries(pendingChangeRequest.changes).map(([field, diff]) => (
+                  <Text key={field} style={styles.pendingBannerLine}>
+                    {field === "name" ? "Name" : field === "email" ? "Email" : "Address"}: {diff.new}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          )}
 
           <View style={styles.infoCard}>
             <FieldRow label="Full Name" editing={editing} value={name} displayValue={profile?.name || ""} onChangeText={setName} icon="account" />
@@ -566,6 +655,9 @@ const styles = StyleSheet.create({
   statDivider: { width: 1, backgroundColor: Colors.border, marginVertical: 4 },
 
   infoCard: { backgroundColor: Colors.card, borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md, shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
+  pendingBanner: { flexDirection: "row", alignItems: "flex-start", backgroundColor: Colors.warningLight, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.warning, padding: Spacing.md, marginBottom: Spacing.md },
+  pendingBannerTitle: { fontWeight: "700", fontSize: 13, color: Colors.text, marginBottom: 2 },
+  pendingBannerLine: { fontSize: 12, color: Colors.textSecondary },
   fieldRowView: { paddingVertical: Spacing.sm },
   fieldLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   fieldLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.5, textTransform: "uppercase" },
