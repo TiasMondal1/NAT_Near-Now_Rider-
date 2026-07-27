@@ -95,6 +95,15 @@ export default function HomeScreen() {
   // handleAcceptOffer twice before that happens. A ref updates immediately.
   const acceptingRef = useRef(false);
   const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
+  // Both polls previously swallowed every failure into an empty catch {},
+  // so a rider online during a degraded-but-reachable backend saw the exact
+  // same "No orders right now" as someone genuinely idle, with no way to
+  // tell them apart. Tracked with refs (not state) so a single transient
+  // blip doesn't re-render/flicker a warning — only shown after 2
+  // consecutive failures on either poll.
+  const consecutiveOffersFailuresRef = useRef(0);
+  const consecutiveActiveOrderFailuresRef = useRef(0);
+  const [pollingDegraded, setPollingDegraded] = useState(false);
   const [token, setToken] = useState("");
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
@@ -325,6 +334,17 @@ export default function HomeScreen() {
     };
   }, [isOnline, token, sendLocation, sendLastKnownLocation]);
 
+  // A single combined "is polling actually working" flag, recomputed after
+  // every attempt on either poll — 2 consecutive failures on either one
+  // marks it degraded; a single success on either clears it, since one
+  // working poll means the backend is reachable, not that both endpoints
+  // failed.
+  const updatePollingDegraded = useCallback(() => {
+    setPollingDegraded(
+      consecutiveOffersFailuresRef.current >= 2 || consecutiveActiveOrderFailuresRef.current >= 2
+    );
+  }, []);
+
   const fetchOffers = useCallback(async () => {
     if (!token) return;
     try {
@@ -334,6 +354,8 @@ export default function HomeScreen() {
         token,
         0   // no retries on polls — fail fast, next cycle will retry
       );
+      consecutiveOffersFailuresRef.current = 0;
+      updatePollingDegraded();
       if (res.success) {
         setIgnoredOfferIds((prev) => {
           // Prune stale ignored IDs (offers that are no longer in the server list)
@@ -343,8 +365,11 @@ export default function HomeScreen() {
         });
         setOffers(res.offers || []);
       }
-    } catch {}
-  }, [token]);
+    } catch {
+      consecutiveOffersFailuresRef.current++;
+      updatePollingDegraded();
+    }
+  }, [token, updatePollingDegraded]);
 
   const fetchActiveOrder = useCallback(async () => {
     if (!token) return;
@@ -355,11 +380,16 @@ export default function HomeScreen() {
         token,
         0   // no retries on polls
       );
+      consecutiveActiveOrderFailuresRef.current = 0;
+      updatePollingDegraded();
       if (res.success) {
         setActiveOrder(res.orders?.[0] ?? null);
       }
-    } catch {}
-  }, [token]);
+    } catch {
+      consecutiveActiveOrderFailuresRef.current++;
+      updatePollingDegraded();
+    }
+  }, [token, updatePollingDegraded]);
 
   // While online, hand location tracking off to the background TaskManager
   // task the moment the app leaves the foreground, and take it back when it
@@ -847,13 +877,23 @@ export default function HomeScreen() {
           )}
 
           {isOnline && !activeOrder && visibleOffers.length === 0 && (
-            <View style={styles.emptyState}>
-              <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons name="map-marker-check" size={40} color={Colors.accent} />
+            pollingDegraded ? (
+              <View style={styles.emptyState}>
+                <View style={[styles.emptyIconWrap, { backgroundColor: Colors.warningLight }]}>
+                  <MaterialCommunityIcons name="wifi-alert" size={40} color={Colors.warning} />
+                </View>
+                <Text style={styles.emptyTitle}>Having trouble reaching the server</Text>
+                <Text style={styles.emptySub}>We&apos;ll keep retrying — check your connection if this doesn&apos;t clear up</Text>
               </View>
-              <Text style={styles.emptyTitle}>No orders right now</Text>
-              <Text style={styles.emptySub}>New orders appear here automatically</Text>
-            </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIconWrap}>
+                  <MaterialCommunityIcons name="map-marker-check" size={40} color={Colors.accent} />
+                </View>
+                <Text style={styles.emptyTitle}>No orders right now</Text>
+                <Text style={styles.emptySub}>New orders appear here automatically</Text>
+              </View>
+            )
           )}
 
           <View style={{ height: 20 }} />
