@@ -15,7 +15,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
-import { getSession, saveSession } from "../session";
+import { getSession } from "../session";
 import {
   DOC_NUMBER_FORMATS,
   DOC_NUMBER_LENGTHS,

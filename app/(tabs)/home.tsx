@@ -149,11 +149,11 @@ export default function HomeScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [isOnline]);
+  }, [isOnline, pulseAnim]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-  }, []);
+  }, [fadeAnim]);
 
   // Restore this device's previously-ignored offer ids so a dismissed offer
   // doesn't reappear after an app restart (previously this state was
@@ -502,17 +502,18 @@ export default function HomeScreen() {
       return;
     }
 
-    // We need the rider's user_id to filter. Grab it from the session.
-    // `cancelled` guards against isOnline flipping false again (or the
-    // effect re-running for another dep) while this await is in flight —
-    // without it, a channel created after cancellation was orphaned:
-    // subscribed and live, but never assigned anywhere the cleanup below
-    // could find and unsubscribe it. Same pattern already used by the
-    // rider-status effect above.
+    // Needs a real Supabase Auth session, same reason as the rider-status
+    // effect above: driver_order_offers' RLS policy scopes each driver to
+    // their own rows via auth.uid() (migration 20260915000000), so without
+    // restoring the bridge session first, this client's auth.uid() would be
+    // NULL and the subscription would silently receive nothing. `cancelled`
+    // guards against isOnline flipping false again (or the effect re-running
+    // for another dep) while this await is in flight — without it, a channel
+    // created after cancellation was orphaned: subscribed and live, but
+    // never assigned anywhere the cleanup below could find and unsubscribe it.
     let cancelled = false;
-    getSession().then((session) => {
-      if (cancelled || !session?.user?.id) return;
-      const driverId = session.user.id;
+    restoreRiderRealtimeSession(supabase).then((driverId) => {
+      if (cancelled || !driverId) return;
 
       realtimeChannelRef.current = supabase
         .channel(`offers:${driverId}`)

@@ -21,7 +21,7 @@ export default function OfflineBanner() {
       duration: 250,
       useNativeDriver: true,
     }).start();
-  }, [isOffline]);
+  }, [isOffline, slideAnim]);
 
   return (
     <Animated.View style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}>

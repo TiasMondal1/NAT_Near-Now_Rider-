@@ -43,7 +43,7 @@ export default function SignupScreen() {
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-  }, []);
+  }, [fadeAnim]);
 
   useEffect(() => {
     (async () => {
@@ -109,7 +109,6 @@ export default function SignupScreen() {
           id: res.user.id,
           name: res.user.name || name.trim() || "Delivery Partner",
           role: "delivery_partner",
-          isActivated: false,
           phone: res.user.phone || normalizedPhone,
           email: res.user.email || email.trim() || undefined,
         },

@@ -76,7 +76,7 @@ export default function ProfileScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim]);
 
   const fetchProfile = useCallback(async (t: string) => {
     try {
@@ -338,7 +338,7 @@ export default function ProfileScreen() {
     return (
       <SafeAreaView style={styles.centered}>
         <Text style={{ color: Colors.text, fontSize: 15, marginBottom: Spacing.md }}>
-          Couldn't load your profile.
+          Couldn&apos;t load your profile.
         </Text>
         <TouchableOpacity
           style={styles.editBtn}

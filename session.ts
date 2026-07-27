@@ -31,7 +31,6 @@ export type UserSession = {
     id: string;
     name: string;
     role: string;
-    isActivated: boolean;
     phone?: string;
     email?: string;
   };

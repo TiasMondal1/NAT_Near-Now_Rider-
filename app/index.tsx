@@ -44,7 +44,7 @@ export default function EntryScreen() {
     }, 1400);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [router, fadeAnim, scaleAnim, subtitleFade, dotsFade]);
 
   return (
     <View style={styles.container}>

@@ -37,7 +37,7 @@ export default function PhoneScreen() {
         Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
       ]),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim, logoScale]);
 
   const isValid = phone.replace(/\s/g, "").length === 10;
   const fullPhone = `+91${phone.replace(/\s/g, "")}`;

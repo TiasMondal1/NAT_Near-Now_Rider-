@@ -32,15 +32,6 @@ export const SUPABASE_CONFIG = {
     "",
 } as const;
 
-// Google Maps Configuration
-export const GOOGLE_MAPS_CONFIG = {
-  API_KEY:
-    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
-    process.env.VITE_GOOGLE_MAPS_API_KEY ||
-    extra.googleMapsApiKey ||
-    "",
-} as const;
-
 // Razorpay Configuration
 export const RAZORPAY_CONFIG = {
   KEY_ID: process.env.RAZORPAY_KEY_ID || extra.razorpayKeyId || "",
@@ -75,7 +66,6 @@ export const validateConfig = (): ValidationResult => {
 
   if (!SUPABASE_CONFIG.URL) errors.push("EXPO_PUBLIC_SUPABASE_URL is missing");
   if (!SUPABASE_CONFIG.ANON_KEY) errors.push("EXPO_PUBLIC_SUPABASE_ANON_KEY is missing");
-  if (!GOOGLE_MAPS_CONFIG.API_KEY) warnings.push("EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is missing");
 
   if (SUPABASE_CONFIG.URL && !SUPABASE_CONFIG.URL.includes("supabase.co")) {
     warnings.push("EXPO_PUBLIC_SUPABASE_URL does not look like a Supabase URL");

@@ -106,7 +106,7 @@ export default function OrdersScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim]);
 
   useEffect(() => {
     (async () => {
@@ -142,7 +142,7 @@ export default function OrdersScreen() {
   useFocusEffect(
     useCallback(() => {
       if (token) fetchOrders(false);
-    }, [token, tab, fetchOrders])
+    }, [token, fetchOrders])
   );
 
   const renderOrder = useCallback(({ item }: { item: Order }) => (

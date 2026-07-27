@@ -49,7 +49,7 @@ type StoreStop = {
     longitude: number;
     phone: string;
   };
-  items: Array<{ id: string; product_name: string; quantity: number; unit: string }>;
+  items: { id: string; product_name: string; quantity: number; unit: string }[];
 };
 
 type ActiveOrder = {
@@ -274,38 +274,6 @@ export default function DeliveryScreen() {
   const slideAnim = useRef(new Animated.Value(30)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    (async () => {
-      const session = await getSession();
-      if (!session?.token) return;
-      setToken(session.token);
-      await loadSequence(session.token);
-    })();
-
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      locationSubRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
-        (loc) => {
-          setDriverLat(loc.coords.latitude);
-          setDriverLng(loc.coords.longitude);
-        }
-      );
-    })();
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      locationSubRef.current?.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!token) return;
-    pollRef.current = setInterval(() => loadSequence(token, true), 10000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [token]);
-
   const loadSequence = useCallback(
     async (t: string, silent = false) => {
       try {
@@ -331,6 +299,38 @@ export default function DeliveryScreen() {
     },
     [orderId, slideAnim, fadeAnim]
   );
+
+  useEffect(() => {
+    (async () => {
+      const session = await getSession();
+      if (!session?.token) return;
+      setToken(session.token);
+      await loadSequence(session.token);
+    })();
+
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      locationSubRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
+        (loc) => {
+          setDriverLat(loc.coords.latitude);
+          setDriverLng(loc.coords.longitude);
+        }
+      );
+    })();
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      locationSubRef.current?.remove();
+    };
+  }, [loadSequence]);
+
+  useEffect(() => {
+    if (!token) return;
+    pollRef.current = setInterval(() => loadSequence(token, true), 10000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [token, loadSequence]);
 
   const markDelivered = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

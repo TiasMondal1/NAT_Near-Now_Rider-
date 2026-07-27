@@ -33,7 +33,6 @@ type VerifyOtpResponse = {
     id: string;
     name: string;
     role: "customer" | "shopkeeper" | "delivery_partner";
-    isActivated: boolean;
     phone?: string;
     email?: string;
   };
@@ -78,7 +77,13 @@ export default function OTPScreen() {
   const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(""));
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(60);
-  const inputsRef = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
+  const inputsRef = useRef<(TextInput | null)[]>(Array(OTP_LENGTH).fill(null));
+  // React state alone can't guard against a double-submit: `loading` doesn't
+  // take effect until the next render commits, so a fast double-tap (or the
+  // auto-submit effect below firing right alongside a manual tap) can pass
+  // the `loading` check twice before the button actually disables. Same
+  // pattern/fix as the accept-offer race in the rider home screen.
+  const verifyingRef = useRef(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -88,7 +93,7 @@ export default function OTPScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 8, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim]);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -144,7 +149,8 @@ export default function OTPScreen() {
   };
 
   const handleVerify = async (code = otp) => {
-    if (code.length !== OTP_LENGTH || loading) return;
+    if (code.length !== OTP_LENGTH || verifyingRef.current) return;
+    verifyingRef.current = true;
     setLoading(true);
     try {
       const res = await apiFetch<VerifyOtpResponse>("/api/auth/verify-otp", {
@@ -168,7 +174,6 @@ export default function OTPScreen() {
               user: {
                 ...res.user!,
                 role: "delivery_partner",
-                isActivated: res.user!.isActivated ?? true,
               },
               needsSignupCompletion: false,
             });
@@ -185,7 +190,6 @@ export default function OTPScreen() {
             user: {
               ...res.user,
               role: "delivery_partner",
-              isActivated: res.user.isActivated ?? false,
               phone: res.user.phone || phone,
             },
             needsSignupCompletion: true,
@@ -224,7 +228,6 @@ export default function OTPScreen() {
         user: {
           ...res.user!,
           role: "delivery_partner",
-          isActivated: res.user!.isActivated ?? true,
         },
         needsSignupCompletion: false,
       });
@@ -245,6 +248,7 @@ export default function OTPScreen() {
       setDigits(Array(OTP_LENGTH).fill(""));
       inputsRef.current[0]?.focus();
     } finally {
+      verifyingRef.current = false;
       setLoading(false);
     }
   };

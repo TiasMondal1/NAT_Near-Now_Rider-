@@ -254,7 +254,7 @@ export default function PendingVerificationScreen() {
                   </View>
                 </View>
                 <Text style={styles.docsDesc}>
-                  Upload Aadhaar (front &amp; back), PAN (front &amp; back), Driving License (front &amp; back), and Vehicle Registration — Vehicle Registration isn't required for cycles or e-bikes.
+                  Upload Aadhaar (front &amp; back), PAN (front &amp; back), Driving License (front &amp; back), and Vehicle Registration — Vehicle Registration isn&apos;t required for cycles or e-bikes.
                 </Text>
 
                 {rejectedDocs.map((doc) => (

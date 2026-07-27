@@ -22,6 +22,10 @@ const isExpoGo = Constants.executionEnvironment === "storeClient";
 
 let Notifications: typeof import("expo-notifications") | null = null;
 if (!isExpoGo) {
+  // Must stay a conditional require(), not a static import: a static import
+  // is hoisted and would always execute regardless of `isExpoGo`, loading a
+  // module that's unsupported (and can throw) in Expo Go.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   Notifications = require("expo-notifications");
   Notifications!.setNotificationHandler({
     handleNotification: async () => ({
@@ -118,7 +122,7 @@ export default function RootLayout() {
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, router]);
 
   // Read a fresh session on every segment change to avoid stale-state race conditions
   // (e.g. phone.tsx saves session then navigates — isLoggedIn may not have updated yet)
