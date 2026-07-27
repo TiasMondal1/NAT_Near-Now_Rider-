@@ -34,6 +34,7 @@ type Profile = {
   profile_image_url: string | null;
   vehicle_image_url: string | null;
   vehicle_type: string | null;
+  vehicle_number: string | null;
   created_at: string;
 };
 
@@ -500,6 +501,24 @@ export default function ProfileScreen() {
                 </Text>
               </View>
             </View>
+            <View style={styles.fieldDivider} />
+            <FieldRow
+              label="Vehicle Type"
+              displayValue={
+                profile?.vehicle_type
+                  ? profile.vehicle_type.charAt(0).toUpperCase() + profile.vehicle_type.slice(1)
+                  : "Not set"
+              }
+              readOnly
+              icon="motorbike"
+            />
+            <View style={styles.fieldDivider} />
+            <FieldRow
+              label="Vehicle Number"
+              displayValue={profile?.vehicle_number || "Not provided"}
+              readOnly
+              icon="card-text-outline"
+            />
             <View style={styles.fieldDivider} />
             <View style={styles.fieldRowView}>
               <View style={styles.fieldLabelRow}>
