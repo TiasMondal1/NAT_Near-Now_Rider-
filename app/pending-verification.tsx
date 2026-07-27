@@ -20,6 +20,7 @@ import { supabase } from "../lib/supabase";
 import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
+import { ADMIN_CONTACTS, formatPhoneForDisplay } from "../constants/config";
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
@@ -296,13 +297,19 @@ export default function PendingVerificationScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.linkBtn}
-            onPress={() => Linking.openURL("tel:+919062692914")}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.linkBtnText}>Need help? Call +91 9062692914</Text>
-          </TouchableOpacity>
+          <Text style={styles.linkBtnText}>Need help? Contact an admin:</Text>
+          {ADMIN_CONTACTS.map((admin) => (
+            <TouchableOpacity
+              key={admin.phone}
+              style={styles.linkBtn}
+              onPress={() => Linking.openURL(`tel:${admin.phone}`)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.linkBtnText}>
+                {admin.name} — {formatPhoneForDisplay(admin.phone)}
+              </Text>
+            </TouchableOpacity>
+          ))}
 
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.85}>
             <MaterialCommunityIcons name="logout" size={18} color={Colors.danger} />

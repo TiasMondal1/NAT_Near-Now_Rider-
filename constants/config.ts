@@ -46,6 +46,16 @@ export const RAZORPAY_CONFIG = {
   KEY_ID: process.env.RAZORPAY_KEY_ID || extra.razorpayKeyId || "",
 } as const;
 
+// Admins a rider can call for verification/support help.
+export const ADMIN_CONTACTS = [
+  { name: "Tias Mondal", phone: "+919062692914" },
+  { name: "Rounak Jana", phone: "+919836307146" },
+  { name: "Raj Shaw", phone: "+918282070270" },
+] as const;
+
+export const formatPhoneForDisplay = (phone: string) =>
+  phone.replace(/^(\+\d{2})(\d+)$/, "$1 $2");
+
 interface ValidationResult {
   isValid: boolean;
   errors: string[];

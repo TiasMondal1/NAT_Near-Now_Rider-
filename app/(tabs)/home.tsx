@@ -22,7 +22,7 @@ import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
-import { SUPABASE_CONFIG } from "../../constants/config";
+import { SUPABASE_CONFIG, ADMIN_CONTACTS, formatPhoneForDisplay } from "../../constants/config";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
@@ -759,14 +759,21 @@ export default function HomeScreen() {
                     <Text style={styles.statusWarningText}>
                       Your account is pending verification. Please connect to admin to get verified.
                     </Text>
-                    <TouchableOpacity
-                      style={styles.adminContactBtn}
-                      onPress={() => Linking.openURL("tel:+919062692914")}
-                      activeOpacity={0.7}
-                    >
-                      <MaterialCommunityIcons name="phone" size={14} color={Colors.accent} />
-                      <Text style={styles.adminContactText}>+91 9062692914</Text>
-                    </TouchableOpacity>
+                    <View style={{ gap: 6, marginTop: 8 }}>
+                      {ADMIN_CONTACTS.map((admin) => (
+                        <TouchableOpacity
+                          key={admin.phone}
+                          style={[styles.adminContactBtn, { marginTop: 0 }]}
+                          onPress={() => Linking.openURL(`tel:${admin.phone}`)}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialCommunityIcons name="phone" size={14} color={Colors.accent} />
+                          <Text style={styles.adminContactText}>
+                            {admin.name} · {formatPhoneForDisplay(admin.phone)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   </>
                 ) : (
                   <Text style={styles.statusWarningText}>
