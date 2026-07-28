@@ -278,21 +278,6 @@ export default function PendingVerificationScreen() {
           )}
 
           <TouchableOpacity
-            style={styles.billingCard}
-            onPress={() => router.push("/billing-info")}
-            activeOpacity={0.85}
-          >
-            <View style={styles.billingIconWrap}>
-              <MaterialCommunityIcons name="credit-card-outline" size={20} color={Colors.accent} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.billingTitle}>Billing Info</Text>
-              <Text style={styles.billingSub}>Add your name, photo and UPI ID for payouts</Text>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={[styles.secondaryBtn, refreshing && { opacity: 0.6 }]}
             onPress={() => checkApprovalNow(false)}
             disabled={refreshing}
@@ -469,27 +454,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
   secondaryBtnText: { color: Colors.accent, fontSize: 14, fontWeight: "700" },
-  billingCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.md,
-    backgroundColor: Colors.card,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    marginBottom: Spacing.md,
-  },
-  billingIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: Colors.accentLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  billingTitle: { color: Colors.text, fontSize: 14, fontWeight: "700" },
-  billingSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
   helpCard: {
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.xl,

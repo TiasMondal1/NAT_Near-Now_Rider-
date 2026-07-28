@@ -10,9 +10,11 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
@@ -20,6 +22,7 @@ import { clearSession, getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import type { VehicleType } from "../lib/riderVerificationDocuments";
 import { peekRiderVerification } from "../lib/riderVerificationCache";
+import { uploadRiderImage } from "../lib/storage";
 import VerificationNavBar from "../components/VerificationNavBar";
 
 const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
@@ -61,6 +64,15 @@ export default function SignupScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
 
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(
+    cached?.profile?.profile_image_url ?? null
+  );
+  const [uploadingImage, setUploadingImage] = useState(false);
+  // Set only on the fresh (pre-signup) form — there's no account yet to
+  // attach the photo to, so the actual upload is deferred until handleSignup
+  // succeeds and a real user id exists (see there for the upload call).
+  const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       if (phoneParam) {
@@ -82,7 +94,14 @@ export default function SignupScreen() {
       try {
         const res = await apiFetch<{
           success: boolean;
-          profile?: { name?: string; email?: string; address?: string; phone?: string; vehicle_type?: string };
+          profile?: {
+            name?: string;
+            email?: string;
+            address?: string;
+            phone?: string;
+            vehicle_type?: string;
+            profile_image_url?: string | null;
+          };
         }>("/delivery-partner/profile", {}, session.token);
         if (res.success && res.profile) {
           setName(res.profile.name || "");
@@ -90,6 +109,7 @@ export default function SignupScreen() {
           setAddress(res.profile.address || "");
           if (res.profile.phone) setPhone(res.profile.phone);
           if (res.profile.vehicle_type) setVehicleType(res.profile.vehicle_type as VehicleType);
+          if (res.profile.profile_image_url !== undefined) setProfileImageUrl(res.profile.profile_image_url ?? null);
         }
       } catch {
         // non-fatal — screen still shows whatever session/cache info it already has
@@ -103,6 +123,47 @@ export default function SignupScreen() {
     // profile unnecessarily.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneParam]);
+
+  const pickImage = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo library access to add your photo.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const uri = result.assets[0].uri;
+
+    if (!viewOnly) {
+      // Fresh, pre-signup form — no account exists yet to upload against.
+      // Just preview it locally; handleSignup uploads it for real once
+      // signup succeeds and a real user id exists.
+      setPendingImageUri(uri);
+      setProfileImageUrl(uri);
+      return;
+    }
+    if (profileImageUrl) return; // already set — read-only from here on
+
+    const session = await getSession();
+    if (!session?.token || !session?.user?.id) return;
+    setUploadingImage(true);
+    try {
+      const res = await uploadRiderImage(session.user.id, uri);
+      if (!res.ok) {
+        Alert.alert("Upload failed", res.error);
+        return;
+      }
+      await apiFetch("/delivery-partner/photo-urls", { method: "PATCH", body: { profile_image_url: res.url } }, session.token);
+      setProfileImageUrl(res.url);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   const isValid = name.trim().length >= 2 && !!vehicleType;
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -178,6 +239,26 @@ export default function SignupScreen() {
         signupTicket: undefined,
       });
 
+      // Best-effort, fire-and-forget — a photo picked before the account
+      // existed gets uploaded now that a real user id/token exists. Doesn't
+      // block navigation; if it fails, the rider can add it later from
+      // Billing Info or Profile.
+      if (pendingImageUri) {
+        (async () => {
+          try {
+            const uploadRes = await uploadRiderImage(res.user!.id, pendingImageUri);
+            if (!uploadRes.ok) return;
+            await apiFetch(
+              "/delivery-partner/photo-urls",
+              { method: "PATCH", body: { profile_image_url: uploadRes.url } },
+              res.token
+            );
+          } catch {
+            /* non-fatal */
+          }
+        })();
+      }
+
       // New riders must upload docs next (Aadhaar / PAN / vehicle).
       router.replace(await resolveAuthenticatedRoute(res.token));
     } catch (err: unknown) {
@@ -213,8 +294,41 @@ export default function SignupScreen() {
           <View>
             {viewOnly && <VerificationNavBar active="details" />}
 
-            <View style={styles.headerIcon}>
-              <MaterialCommunityIcons name={viewOnly ? "account-details" : "account-check"} size={32} color={Colors.accent} />
+            <View style={styles.avatarSection}>
+              <TouchableOpacity
+                style={styles.avatarTouch}
+                onPress={pickImage}
+                disabled={uploadingImage || (viewOnly && !!profileImageUrl)}
+                activeOpacity={viewOnly && profileImageUrl ? 1 : 0.8}
+              >
+                {uploadingImage ? (
+                  <View style={styles.avatar}>
+                    <ActivityIndicator color={Colors.accent} />
+                  </View>
+                ) : profileImageUrl ? (
+                  <Image source={{ uri: profileImageUrl }} style={styles.avatar} />
+                ) : (
+                  <View style={styles.avatar}>
+                    <MaterialCommunityIcons name="account" size={32} color={Colors.accent} />
+                  </View>
+                )}
+                {viewOnly && profileImageUrl ? (
+                  <View style={styles.lockBadge}>
+                    <MaterialCommunityIcons name="lock" size={11} color="#fff" />
+                  </View>
+                ) : (
+                  <View style={styles.camBadge}>
+                    <MaterialCommunityIcons name="camera" size={12} color="#fff" />
+                  </View>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.avatarHint}>
+                {viewOnly && profileImageUrl
+                  ? "Photo already on file — locked"
+                  : profileImageUrl
+                    ? "Tap to change your photo"
+                    : "Tap to add your photo"}
+              </Text>
             </View>
             <Text style={styles.title}>{viewOnly ? "Your Details" : "Complete your profile"}</Text>
             <Text style={styles.subtitle}>
@@ -374,16 +488,46 @@ const styles = StyleSheet.create({
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
   },
-  headerIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  avatarSection: { alignItems: "center", marginTop: Spacing.md, marginBottom: Spacing.md },
+  avatarTouch: { position: "relative" },
+  avatar: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: Colors.accentLight,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: Spacing.md,
-    marginBottom: Spacing.md,
+    borderWidth: 3,
+    borderColor: Colors.card,
+    overflow: "hidden",
   },
+  camBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: Colors.card,
+  },
+  lockBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.textMuted,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: Colors.card,
+  },
+  avatarHint: { fontSize: 12, color: Colors.textMuted, marginTop: Spacing.sm },
   title: { color: Colors.text, fontSize: 26, fontWeight: "800", marginBottom: Spacing.xs },
   subtitle: { color: Colors.textSecondary, fontSize: 15, marginBottom: Spacing.lg },
   card: {
