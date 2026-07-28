@@ -47,8 +47,6 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [token, setToken] = useState("");
-  const [totalDeliveries, setTotalDeliveries] = useState(0);
-  const [totalEarnings, setTotalEarnings] = useState(0);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -97,22 +95,6 @@ export default function ProfileScreen() {
     } catch {
       setLoadError(true);
     }
-  }, []);
-
-  const fetchStats = useCallback(async (t: string) => {
-    try {
-      const res = await apiFetch<{ success: boolean; orders: { total_amount: number; payout_amount: number | null }[] }>(
-        "/delivery-partner/orders?status=completed",
-        {},
-        t
-      );
-      if (res.success) {
-        setTotalDeliveries(res.orders.length);
-        // Real payout amount (flat fee + tip) from delivery_partners_payouts, not
-        // the old hardcoded 15% of total_amount with nothing server-side behind it.
-        setTotalEarnings(res.orders.reduce((sum, o) => sum + (o.payout_amount ?? 0), 0));
-      }
-    } catch {}
   }, []);
 
   const loadPendingChangeRequest = useCallback(async (t: string) => {
@@ -164,20 +146,18 @@ export default function ProfileScreen() {
       setToken(session.token);
       await Promise.all([
         fetchProfile(session.token),
-        fetchStats(session.token),
         loadPendingChangeRequest(session.token),
       ]);
       setLoading(false);
     })();
-  }, [fetchProfile, fetchStats, loadPendingChangeRequest]);
+  }, [fetchProfile, loadPendingChangeRequest]);
 
   useFocusEffect(
     useCallback(() => {
       if (token) {
-        fetchStats(token);
         loadPendingChangeRequest(token);
       }
-    }, [token, fetchStats, loadPendingChangeRequest])
+    }, [token, loadPendingChangeRequest])
   );
 
   // Uploads directly to the delivery_partner_image bucket (anon-direct, same
@@ -431,24 +411,6 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <View style={[styles.statIconWrap, { backgroundColor: Colors.accentLight }]}>
-                <MaterialCommunityIcons name="package-variant-closed" size={18} color={Colors.accent} />
-              </View>
-              <Text style={styles.statValue}>{totalDeliveries}</Text>
-              <Text style={styles.statLabel}>Deliveries</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <View style={[styles.statIconWrap, { backgroundColor: Colors.successLight }]}>
-                <MaterialCommunityIcons name="currency-inr" size={18} color={Colors.success} />
-              </View>
-              <Text style={styles.statValue}>{"₹"}{totalEarnings.toFixed(0)}</Text>
-              <Text style={styles.statLabel}>Earned</Text>
-            </View>
-          </View>
-
           {pendingChangeRequest && (
             <View style={styles.pendingBanner}>
               <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.warning} />
@@ -575,6 +537,12 @@ export default function ProfileScreen() {
               <Text style={styles.quickActionText}>Order History</Text>
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
+            <View style={styles.fieldDivider} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/notification-preferences")}>
+              <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.accent} />
+              <Text style={styles.quickActionText}>Notification Preferences</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -652,26 +620,6 @@ const styles = StyleSheet.create({
   displayName: { color: Colors.text, fontSize: 22, fontWeight: "700" },
   roleBadge: { flexDirection: "row", alignItems: "center", marginTop: 6, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 4, backgroundColor: Colors.accentLight },
   roleText: { color: Colors.accent, fontSize: 12, fontWeight: "600" },
-
-  statsRow: {
-    flexDirection: "row",
-    backgroundColor: Colors.card,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: Spacing.md,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  statItem: { flex: 1, alignItems: "center" },
-  statIconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 6 },
-  statValue: { color: Colors.text, fontSize: 18, fontWeight: "800" },
-  statLabel: { color: Colors.textMuted, fontSize: 11, fontWeight: "600", marginTop: 2 },
-  statDivider: { width: 1, backgroundColor: Colors.border, marginVertical: 4 },
 
   infoCard: { backgroundColor: Colors.card, borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md, shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   pendingBanner: { flexDirection: "row", alignItems: "flex-start", backgroundColor: Colors.warningLight, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.warning, padding: Spacing.md, marginBottom: Spacing.md },

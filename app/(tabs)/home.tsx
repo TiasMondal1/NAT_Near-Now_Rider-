@@ -15,7 +15,7 @@ import {
   type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { createClient } from "@supabase/supabase-js";
@@ -27,6 +27,7 @@ import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
 import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
+import LocationPermissionModal from "../../components/LocationPermissionModal";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
@@ -36,6 +37,7 @@ const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 // AsyncStorage, not a driver_order_offers status column, which would risk
 // colliding with the real accept/expire/reassign state machine there.
 const IGNORED_OFFERS_KEY = "rider_ignored_offer_ids";
+const LOCATION_PERMISSION_EXPLAINED_KEY = "rider_location_permission_explained";
 
 type OfferStore = {
   store_id: string;
@@ -103,6 +105,7 @@ export default function HomeScreen() {
   // handleAcceptOffer twice before that happens. A ref updates immediately.
   const acceptingRef = useRef(false);
   const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
+  const [showLocationPermissionModal, setShowLocationPermissionModal] = useState(false);
   // Guards the persist effect below from firing (and overwriting real
   // storage with an empty set) before the initial AsyncStorage read below
   // has actually completed.
@@ -181,28 +184,57 @@ export default function HomeScreen() {
     });
   }, [ignoredOfferIds]);
 
+  const fetchUnreadCount = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await apiFetch<{ is_read: boolean }[]>(
+        "/delivery-partner/notifications?unreadOnly=true",
+        {},
+        token
+      );
+      setUnreadNotifications(Array.isArray(data) ? data.length : 0);
+    } catch {
+      // Non-critical — leave the badge count as-is on failure
+    }
+  }, [token]);
+
+  // Refetch the instant this tab regains focus — e.g. coming back from the
+  // notifications screen after "mark all read". Without this the badge only
+  // updated on the next 30s poll tick, so it looked stuck/broken for up to
+  // half a minute after clearing every notification.
+  useFocusEffect(
+    useCallback(() => {
+      fetchUnreadCount();
+    }, [fetchUnreadCount])
+  );
+
   useEffect(() => {
     if (!token) return;
-
-    const fetchUnreadCount = async () => {
-      try {
-        const data = await apiFetch<{ is_read: boolean }[]>(
-          "/delivery-partner/notifications?unreadOnly=true",
-          {},
-          token
-        );
-        setUnreadNotifications(Array.isArray(data) ? data.length : 0);
-      } catch {
-        // Non-critical — leave the badge count as-is on failure
-      }
-    };
-
     fetchUnreadCount();
     notificationsPollRef.current = setInterval(fetchUnreadCount, 30000);
     return () => {
       if (notificationsPollRef.current) clearInterval(notificationsPollRef.current);
     };
-  }, [token]);
+  }, [token, fetchUnreadCount]);
+
+  const requestLocationPermissions = useCallback(async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Location permission is required.");
+      return;
+    }
+    // Requested only after foreground is already granted, and separately
+    // from it (Apple's guidance — asking for "Always" up front hurts grant
+    // rates). Denial isn't fatal: foreground tracking below still works
+    // while the app is open, this only unlocks tracking while backgrounded.
+    await Location.requestBackgroundPermissionsAsync();
+  }, []);
+
+  const handleLocationModalContinue = useCallback(() => {
+    setShowLocationPermissionModal(false);
+    AsyncStorage.setItem(LOCATION_PERMISSION_EXPLAINED_KEY, "1").catch(() => {});
+    requestLocationPermissions();
+  }, [requestLocationPermissions]);
 
   useEffect(() => {
     (async () => {
@@ -211,15 +243,16 @@ export default function HomeScreen() {
       setToken(session.token);
       setUserName(session.user?.name || "");
 
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission needed", "Location permission is required.");
+      // Shown once, ever — an in-app explanation before the OS's own "Allow
+      // all the time" dialog, instead of jumping straight into that system
+      // prompt with zero context. Riders only ever reach this screen once
+      // verified (resolveAuthenticatedRoute gates it), so this is already
+      // naturally "right after being verified" on their first Home visit.
+      const alreadyExplained = await AsyncStorage.getItem(LOCATION_PERMISSION_EXPLAINED_KEY);
+      if (!alreadyExplained) {
+        setShowLocationPermissionModal(true);
       } else {
-        // Requested only after foreground is already granted, and separately
-        // from it (Apple's guidance — asking for "Always" up front hurts grant
-        // rates). Denial isn't fatal: foreground tracking below still works
-        // while the app is open, this only unlocks tracking while backgrounded.
-        await Location.requestBackgroundPermissionsAsync();
+        await requestLocationPermissions();
       }
 
       try {
@@ -240,7 +273,7 @@ export default function HomeScreen() {
       if (pollRef.current) clearInterval(pollRef.current);
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, []);
+  }, [requestLocationPermissions]);
 
   // Poll while account is anything other than active — covers both
   // pending_verification -> active (new signup approved) and
@@ -630,7 +663,9 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <>
+      <LocationPermissionModal visible={showLocationPermissionModal} onContinue={handleLocationModalContinue} />
+      <SafeAreaView style={styles.safe}>
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
@@ -730,6 +765,23 @@ export default function HomeScreen() {
                     <ActivityIndicator size="small" color={Colors.accentText} />
                   ) : (
                     <Text style={styles.goOnlineBtnText}>Go Online</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              {/* Previously only the top-right Switch could take a rider offline
+                  while online — no explicit "Go Offline" action existed, unlike
+                  the symmetric "Go Online" button shown while offline above. */}
+              {isOnline && (
+                <TouchableOpacity
+                  style={[styles.goOfflineBtn, toggling && { opacity: 0.5 }]}
+                  onPress={() => handleToggle(false)}
+                  disabled={toggling}
+                  activeOpacity={0.8}
+                >
+                  {toggling ? (
+                    <ActivityIndicator size="small" color={Colors.offline} />
+                  ) : (
+                    <Text style={styles.goOfflineBtnText}>Go Offline</Text>
                   )}
                 </TouchableOpacity>
               )}
@@ -950,7 +1002,8 @@ export default function HomeScreen() {
           <View style={{ height: 20 }} />
         </ScrollView>
       </Animated.View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </>
   );
 }
 
@@ -1029,6 +1082,15 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   goOnlineBtnText: { color: Colors.accentText, fontSize: 13, fontWeight: "700" },
+  goOfflineBtn: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: Colors.offline,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+  },
+  goOfflineBtnText: { color: Colors.offline, fontSize: 13, fontWeight: "700" },
 
   activeCard: {
     backgroundColor: Colors.card,
