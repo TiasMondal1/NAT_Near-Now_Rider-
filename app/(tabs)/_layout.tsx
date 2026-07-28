@@ -9,9 +9,15 @@ export default function TabLayout() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
   const iconSize = isTablet ? 28 : 24;
-  const { checking } = useRiderVerificationGate("require-verified");
+  const { checking, verified } = useRiderVerificationGate("require-verified");
 
-  if (checking) {
+  // !verified alone isn't a substitute for a real network re-check (see
+  // useRiderVerificationGate's AppState handling for that) — this just
+  // closes the narrower gap where `checking` is already false (cache warm)
+  // but the cached result itself says not-yet-verified, so this screen
+  // would otherwise render real tab content for one frame before evaluate()'s
+  // redirect fires.
+  if (checking || !verified) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: Colors.bg }}>
         <ActivityIndicator size="large" color={Colors.accent} />

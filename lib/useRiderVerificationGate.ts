@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { getSession } from "../session";
@@ -85,6 +86,32 @@ export function useRiderVerificationGate(mode: GateMode) {
     }, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [evaluate]);
+
+  // The cache seeded above (peekRiderVerification) only proves the rider was
+  // verified as of the last check — potentially made stale by an admin
+  // suspending them, or a document getting invalidated, while this screen
+  // sat in the background. `checking`/`verified` alone don't catch that: both
+  // are seeded from the same stale cache, so the screen would otherwise
+  // render real content on the very first frame after foregrounding, before
+  // evaluate()'s background re-check has a chance to redirect it away.
+  // Foregrounding the app doesn't fire useFocusEffect on its own (the screen
+  // was never blurred by React Navigation), so it needs its own listener,
+  // same pattern as home.tsx's AppState-driven location handoff. This
+  // deliberately re-blocks on every foreground rather than trusting the
+  // cache indefinitely — the ordinary in-session screen-to-screen bounce
+  // (Details → Status → Documents) never triggers an AppState transition, so
+  // that fast-paint case this cache exists for is untouched.
+  const evaluateRef = useRef(evaluate);
+  evaluateRef.current = evaluate;
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState !== "active") return;
+      setChecking(true);
+      void evaluateRef.current().finally(() => setChecking(false));
+    };
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
+  }, []);
 
   return {
     checking,

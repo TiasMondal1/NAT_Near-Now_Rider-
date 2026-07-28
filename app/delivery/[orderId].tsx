@@ -256,7 +256,7 @@ function PickupStopCard({
 export default function DeliveryScreen() {
   const router = useRouter();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
-  const { checking: verificationChecking } = useRiderVerificationGate("require-verified");
+  const { checking: verificationChecking, verified: verificationVerified } = useRiderVerificationGate("require-verified");
   const [order, setOrder] = useState<ActiveOrder | null>(null);
   const [stops, setStops] = useState<StoreStop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -383,7 +383,11 @@ export default function DeliveryScreen() {
     if (scheme) Linking.openURL(scheme);
   };
 
-  if (verificationChecking || loading || !order) {
+  // !verificationVerified closes the narrower gap where verificationChecking
+  // is already false (cache warm) but the cached result itself says
+  // not-yet-verified — see useRiderVerificationGate's own AppState handling
+  // for the broader "went stale while backgrounded" case.
+  if (verificationChecking || !verificationVerified || loading || !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={Colors.accent} size="large" />
