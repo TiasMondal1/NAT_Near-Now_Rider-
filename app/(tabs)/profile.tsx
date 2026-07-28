@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -345,19 +345,20 @@ export default function ProfileScreen() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
       <View style={styles.responsiveWrap}>
-      <Animated.View style={[styles.headerRow, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.topBar, { opacity: fadeAnim }]}>
         <Text style={styles.header}>Profile</Text>
         {!editing ? (
           <TouchableOpacity
-            style={styles.editBtn}
+            style={styles.editChip}
             onPress={() => setEditing(true)}
+            activeOpacity={0.8}
           >
-            <MaterialCommunityIcons name="pencil" size={16} color={Colors.accent} />
-            <Text style={styles.editBtnText}>Edit</Text>
+            <MaterialCommunityIcons name="pencil" size={14} color={Colors.accent} />
+            <Text style={styles.editChipText}>Edit</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={() => setEditing(false)}>
-            <Text style={styles.cancelText}>Cancel</Text>
+          <TouchableOpacity style={styles.cancelChip} onPress={() => setEditing(false)} activeOpacity={0.8}>
+            <Text style={styles.cancelChipText}>Cancel</Text>
           </TouchableOpacity>
         )}
       </Animated.View>
@@ -395,19 +396,34 @@ export default function ProfileScreen() {
                   )}
                 </View>
               )}
-
-              {/* Online/offline dot */}
-              <View
-                style={[
-                  styles.onlineDot,
-                  { backgroundColor: profile?.is_online ? Colors.online : Colors.offline },
-                ]}
-              />
             </TouchableOpacity>
             <Text style={styles.displayName}>{profile?.name}</Text>
-            <View style={styles.roleBadge}>
-              <MaterialCommunityIcons name="truck-delivery" size={12} color={Colors.accent} style={{ marginRight: 4 }} />
-              <Text style={styles.roleText}>Delivery Partner</Text>
+            <View style={styles.badgeRow}>
+              <View style={styles.roleBadge}>
+                <MaterialCommunityIcons name="truck-delivery" size={12} color={Colors.accent} style={{ marginRight: 4 }} />
+                <Text style={styles.roleText}>Delivery Partner</Text>
+              </View>
+              <View
+                style={[
+                  styles.statusPill,
+                  { backgroundColor: profile?.is_online ? Colors.successLight : Colors.dangerLight },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: profile?.is_online ? Colors.success : Colors.danger },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.statusPillText,
+                    { color: profile?.is_online ? Colors.success : Colors.danger },
+                  ]}
+                >
+                  {profile?.is_online ? "Online" : "Offline"}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -425,7 +441,7 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          <View style={styles.infoCard}>
+          <SectionCard title="Account" icon="account-outline">
             <FieldRow label="Full Name" editing={editing} value={name} displayValue={profile?.name || ""} onChangeText={setName} icon="account" />
             <View style={styles.fieldDivider} />
             <FieldRow label="Phone" displayValue={profile?.phone || ""} readOnly icon="phone" />
@@ -433,33 +449,37 @@ export default function ProfileScreen() {
             <FieldRow label="Email" editing={editing} value={email} displayValue={profile?.email || "Not provided"} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholder="email@example.com" icon="email" />
             <View style={styles.fieldDivider} />
             <FieldRow label="Address" editing={editing} value={address} displayValue={profile?.address || "Not provided"} onChangeText={setAddress} multiline placeholder="Your address" icon="map-marker" />
-          </View>
+          </SectionCard>
 
-          <View style={styles.infoCard}>
+          <SectionCard title="Vehicle Information" icon="truck-delivery-outline">
             <View style={styles.vehiclePhotoRow}>
               <TouchableOpacity
                 style={styles.vehiclePhotoThumb}
-                onPress={handlePickVehicleImage}
-                disabled={uploadingVehicleImage}
-                activeOpacity={0.8}
+                onPress={editing ? handlePickVehicleImage : undefined}
+                disabled={uploadingVehicleImage || !editing}
+                activeOpacity={editing ? 0.8 : 1}
               >
                 {profile?.vehicle_image_url ? (
                   <Image source={{ uri: profile.vehicle_image_url }} style={styles.vehiclePhotoImage} />
                 ) : (
                   <MaterialCommunityIcons name="motorbike" size={24} color={Colors.textMuted} />
                 )}
-                <View style={styles.vehiclePhotoOverlay}>
-                  {uploadingVehicleImage ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <MaterialCommunityIcons name="camera" size={16} color="#fff" />
-                  )}
-                </View>
+                {editing && (
+                  <View style={styles.vehiclePhotoOverlay}>
+                    {uploadingVehicleImage ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                    )}
+                  </View>
+                )}
               </TouchableOpacity>
               <View style={{ flex: 1 }}>
                 <Text style={styles.fieldLabel}>Vehicle Photo</Text>
                 <Text style={styles.fieldValueMuted}>
-                  {profile?.vehicle_image_url ? "Tap to change" : "Tap to add a photo of your vehicle"}
+                  {editing
+                    ? profile?.vehicle_image_url ? "Tap to change" : "Tap to add a photo of your vehicle"
+                    : profile?.vehicle_image_url ? "Tap Edit to change" : "Not added"}
                 </Text>
               </View>
             </View>
@@ -497,7 +517,7 @@ export default function ProfileScreen() {
                   : "---"}
               </Text>
             </View>
-          </View>
+          </SectionCard>
 
           {editing && (
             <TouchableOpacity
@@ -517,8 +537,10 @@ export default function ProfileScreen() {
           )}
 
           <View style={styles.quickActions}>
-            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/documents")}>
-              <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/documents")} activeOpacity={0.75}>
+              <View style={styles.quickActionIconWrap}>
+                <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
+              </View>
               <View style={styles.quickActionCopy}>
                 <Text style={styles.quickActionText}>Upload Documents</Text>
                 <Text style={styles.quickActionSubtext}>Aadhaar, PAN, Driving License, Vehicle RC</Text>
@@ -526,26 +548,32 @@ export default function ProfileScreen() {
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
             <View style={styles.fieldDivider} />
-            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/earnings")}>
-              <MaterialCommunityIcons name="chart-line" size={20} color={Colors.accent} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/earnings")} activeOpacity={0.75}>
+              <View style={styles.quickActionIconWrap}>
+                <MaterialCommunityIcons name="chart-line" size={20} color={Colors.accent} />
+              </View>
               <Text style={styles.quickActionText}>View Earnings</Text>
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
             <View style={styles.fieldDivider} />
-            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/orders")}>
-              <MaterialCommunityIcons name="clipboard-list" size={20} color={Colors.accent} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/(tabs)/orders")} activeOpacity={0.75}>
+              <View style={styles.quickActionIconWrap}>
+                <MaterialCommunityIcons name="clipboard-list" size={20} color={Colors.accent} />
+              </View>
               <Text style={styles.quickActionText}>Order History</Text>
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
             <View style={styles.fieldDivider} />
-            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/notification-preferences")}>
-              <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.accent} />
+            <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push("/notification-preferences")} activeOpacity={0.75}>
+              <View style={styles.quickActionIconWrap}>
+                <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.accent} />
+              </View>
               <Text style={styles.quickActionText}>Notification Preferences</Text>
               <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.85}>
             <MaterialCommunityIcons name="logout" size={18} color={Colors.danger} />
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
@@ -556,6 +584,20 @@ export default function ProfileScreen() {
       </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+function SectionCard({ title, icon, children }: { title: string; icon: string; children: ReactNode }) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardIconWrap}>
+          <MaterialCommunityIcons name={icon as any} size={15} color={Colors.accent} />
+        </View>
+        <Text style={styles.cardTitle}>{title}</Text>
+      </View>
+      <View style={styles.cardBody}>{children}</View>
+    </View>
   );
 }
 
@@ -596,32 +638,116 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
   flex: { flex: 1 },
   centered: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
-  header: { color: Colors.text, fontSize: 28, fontWeight: "800" },
+  header: { color: Colors.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.3 },
   editBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: Colors.accentLight },
   editBtnText: { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   cancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: "600" },
   scroll: { padding: Spacing.lg, paddingBottom: 140 },
 
-  avatarSection: { alignItems: "center", marginBottom: Spacing.lg },
-  avatarOuter: { position: "relative", marginBottom: Spacing.md, width: 88, height: 88 },
-  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.accentLight, alignItems: "center", justifyContent: "center" },
-  avatarImage: { width: 88, height: 88, borderRadius: 44 },
+  topBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.card,
+  },
+  editChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.round,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Colors.accent + "30",
+  },
+  editChipText: { color: Colors.accent, fontSize: 13, fontWeight: "700" },
+  cancelChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: BorderRadius.round,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelChipText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
+
+  avatarSection: { alignItems: "center", marginTop: Spacing.lg, marginBottom: Spacing.lg },
+  avatarOuter: { position: "relative", marginBottom: Spacing.md, width: 96, height: 96 },
+  avatar: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: Colors.accentLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 4,
+    borderColor: Colors.card,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  avatarImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 4,
+    borderColor: Colors.card,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 4,
+  },
   avatarText: { color: Colors.accent, fontSize: 34, fontWeight: "800" },
   avatarEditOverlay: {
     position: "absolute",
     top: 0, left: 0, right: 0, bottom: 0,
-    borderRadius: 44,
+    borderRadius: 48,
     backgroundColor: "rgba(0,0,0,0.45)",
     alignItems: "center",
     justifyContent: "center",
   },
-  onlineDot: { position: "absolute", bottom: 2, right: 2, width: 18, height: 18, borderRadius: 9, borderWidth: 3, borderColor: Colors.bg },
-  displayName: { color: Colors.text, fontSize: 22, fontWeight: "700" },
-  roleBadge: { flexDirection: "row", alignItems: "center", marginTop: 6, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 4, backgroundColor: Colors.accentLight },
+  displayName: { color: Colors.text, fontSize: 22, fontWeight: "700", marginTop: Spacing.xs },
+  badgeRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm, marginTop: 8, flexWrap: "wrap", justifyContent: "center" },
+  roleBadge: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 4, backgroundColor: Colors.accentLight },
   roleText: { color: Colors.accent, fontSize: 12, fontWeight: "600" },
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: BorderRadius.round, paddingHorizontal: 10, paddingVertical: 4 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusPillText: { fontSize: 11, fontWeight: "700" },
 
-  infoCard: { backgroundColor: Colors.card, borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md, shadowColor: Colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
+  card: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+    overflow: "hidden",
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  cardIconWrap: { width: 28, height: 28, borderRadius: BorderRadius.sm, backgroundColor: Colors.accentLight, alignItems: "center", justifyContent: "center" },
+  cardTitle: { color: Colors.text, fontSize: 14, fontWeight: "700" },
+  cardBody: { padding: Spacing.lg },
+
   pendingBanner: { flexDirection: "row", alignItems: "flex-start", backgroundColor: Colors.warningLight, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.warning, padding: Spacing.md, marginBottom: Spacing.md },
   pendingBannerTitle: { fontWeight: "700", fontSize: 13, color: Colors.text, marginBottom: 2 },
   pendingBannerLine: { fontSize: 12, color: Colors.textSecondary },
@@ -664,12 +790,25 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     marginBottom: Spacing.md,
     overflow: "hidden",
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 2,
   },
   quickActionBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: Spacing.sm,
+    gap: Spacing.md,
     padding: Spacing.lg,
+  },
+  quickActionIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.accentLight,
+    alignItems: "center",
+    justifyContent: "center",
   },
   quickActionCopy: { flex: 1 },
   quickActionText: { flex: 1, color: Colors.text, fontSize: 15, fontWeight: "600" },
@@ -678,7 +817,7 @@ const styles = StyleSheet.create({
   saveButton: { backgroundColor: Colors.accent, borderRadius: BorderRadius.md, height: 52, alignItems: "center", justifyContent: "center", marginTop: Spacing.sm, marginBottom: Spacing.md, shadowColor: Colors.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 4 },
   saveInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   saveText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
-  logoutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, paddingVertical: Spacing.md, borderWidth: 1, borderColor: Colors.dangerLight, borderRadius: BorderRadius.md, backgroundColor: Colors.dangerLight },
+  logoutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, paddingVertical: Spacing.md, borderWidth: 1.5, borderColor: Colors.dangerLight, borderRadius: BorderRadius.md, backgroundColor: Colors.dangerLight },
   logoutText: { color: Colors.danger, fontSize: 15, fontWeight: "600" },
   version: { color: Colors.textMuted, fontSize: 12, textAlign: "center", marginTop: Spacing.lg },
 });
