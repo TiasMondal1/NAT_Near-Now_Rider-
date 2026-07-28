@@ -8,9 +8,10 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import Constants from "expo-constants";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
@@ -68,6 +69,18 @@ export default function NotificationPreferencesScreen() {
     load();
   }, [load]);
 
+  // Refresh permission status whenever this screen regains focus — e.g. the
+  // rider backed out to Settings via the "Open Settings" alert below and
+  // toggled the OS permission there, then returned via the back button.
+  useFocusEffect(
+    useCallback(() => {
+      if (!Notifications) return;
+      Notifications.getPermissionsAsync().then(({ status }) => {
+        setPermissionGranted(status === "granted");
+      });
+    }, [])
+  );
+
   const toggle = useCallback(
     (key: keyof Preferences) => {
       if (!token) return;
@@ -82,18 +95,41 @@ export default function NotificationPreferencesScreen() {
 
   const requestPermission = useCallback(async () => {
     if (!Notifications) return;
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    let finalStatus = existing;
-    if (existing !== "granted") {
+    const existing = await Notifications.getPermissionsAsync();
+
+    // Once the OS has recorded a prior denial (e.g. the auto-prompt in
+    // _layout.tsx that fires right after login), it will never show the
+    // request dialog again — requestPermissionsAsync() just silently
+    // resolves with the same denied status, making this button look like
+    // it does nothing. canAskAgain tells us which case we're in.
+    if (existing.status !== "granted" && existing.canAskAgain === false) {
+      Alert.alert(
+        "Notifications disabled",
+        "Notifications for this app are turned off at the device level. Open Settings to enable them.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
+      );
+      return;
+    }
+
+    let finalStatus = existing.status;
+    if (existing.status !== "granted") {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
+
     if (finalStatus === "granted") {
       setPermissionGranted(true);
     } else {
       Alert.alert(
         "Notifications disabled",
-        "Enable notifications for this app in your device settings to receive order and update alerts."
+        "Enable notifications for this app in your device settings to receive order and update alerts.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
       );
     }
   }, []);
