@@ -50,11 +50,6 @@ const DOCUMENT_SECTIONS = [
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP, PDF · Max size 5MB";
-// Vehicle photos are plain photos, not legal/identity documents — a PDF
-// doesn't make sense there, so that upload slot only ever offers the image
-// picker (see VEHICLE_PHOTO_KEYS below) and shows this narrower disclaimer.
-const PHOTO_ONLY_FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP · Max size 5MB";
-const VEHICLE_PHOTO_KEYS = new Set<RequiredDocKey>(["vehicle_photo_front", "vehicle_photo_side", "vehicle_photo_rear"]);
 
 type DocKey = RequiredDocKey;
 type DocsState = Record<DocKey, VerificationDocument | null>;
@@ -193,16 +188,10 @@ export default function DocumentsScreen() {
     }));
   };
 
-  // Vehicle photos go straight to the image picker (a PDF makes no sense for
-  // an actual photo of the vehicle); every other document offers a choice via
-  // pickerSheetKey below, since identity/registration docs are often scanned
-  // to PDF.
+  // Every document, including the 3 vehicle photos, offers a choice between
+  // an image and a PDF via pickerSheetKey below.
   const [pickerSheetKey, setPickerSheetKey] = useState<DocKey | null>(null);
   const handleUploadPress = (key: DocKey) => {
-    if (VEHICLE_PHOTO_KEYS.has(key)) {
-      pickImage(key);
-      return;
-    }
     setPickerSheetKey(key);
   };
 
@@ -454,9 +443,6 @@ export default function DocumentsScreen() {
                 const isPdf = pendingFile
                   ? pendingFile.type === "application/pdf"
                   : !!doc?.url?.toLowerCase().includes(".pdf");
-                const formatsDisclaimer = VEHICLE_PHOTO_KEYS.has(memberKey)
-                  ? PHOTO_ONLY_FORMATS_DISCLAIMER
-                  : FORMATS_DISCLAIMER;
 
                 return (
                   <View key={memberKey} style={idx > 0 ? styles.memberBlockSpaced : undefined}>
@@ -508,13 +494,13 @@ export default function DocumentsScreen() {
                             <MaterialCommunityIcons name="image-plus" size={24} color={Colors.accent} />
                           </View>
                           <Text style={styles.uploadTitle}>Upload {memberSection.label}</Text>
-                          <Text style={styles.uploadHint}>{formatsDisclaimer}</Text>
+                          <Text style={styles.uploadHint}>{FORMATS_DISCLAIMER}</Text>
                         </>
                       )}
                     </TouchableOpacity>
                     {(pendingFile || doc?.url) && (
                       <View style={styles.fileMetaRow}>
-                        <Text style={styles.formatsHint}>{formatsDisclaimer}</Text>
+                        <Text style={styles.formatsHint}>{FORMATS_DISCLAIMER}</Text>
                         {(() => {
                           const sizeLabel = pendingFile?.size
                             ? formatPickedFileSize(pendingFile.size)
