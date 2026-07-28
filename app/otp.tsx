@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ActivityIndicator,
   Alert,
@@ -107,6 +108,7 @@ export default function OTPScreen() {
   // Auto-submit when all 6 digits are filled (handles autofill + manual entry)
   useEffect(() => {
     if (isComplete && !loading) {
+      Keyboard.dismiss();
       handleVerify(otp);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -272,7 +274,14 @@ export default function OTPScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        // Android already resizes the window when the keyboard opens
+        // (AndroidManifest's windowSoftInputMode="adjustResize") — adding
+        // KeyboardAvoidingView's own "height" compensation on top of that
+        // double-shrinks the content, which is what made the keyboard look
+        // like it was swallowing the whole screen instead of just its own
+        // space. No behavior needed on Android; iOS still needs "padding"
+        // since it has no equivalent native resize.
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
         <ScrollView

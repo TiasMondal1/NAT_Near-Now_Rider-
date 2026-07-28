@@ -11,16 +11,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
-import { clearSession, getSession } from "../session";
-import { checkRiderVerification } from "../lib/riderVerification";
+import { clearSession } from "../session";
 import { supabase } from "../lib/supabase";
 import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
 import { ADMIN_CONTACTS, formatPhoneForDisplay } from "../constants/config";
+import VerificationNavBar from "../components/VerificationNavBar";
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
@@ -43,9 +43,18 @@ const DOC_LABELS: Record<RequiredDocKey, string> = {
 
 export default function PendingVerificationScreen() {
   const router = useRouter();
-  const { checking, profile, documents, documentsUploaded } = useRiderVerificationGate("require-pending");
+  // The gate hook is already the single source of truth for profile/doc
+  // state — it fetches on mount, on every screen focus, and every 30s. This
+  // screen used to run a second, fully independent profile+docs fetch of its
+  // own (plus its own separate 10s poll) on top of that, which meant every
+  // visit — especially now that the nav bar makes jumping between
+  // Details/Status/Documents common — fired 2x the network round-trips it
+  // needed to, which is what made navigating between these screens feel slow.
+  // Consolidated onto the hook's own `refresh`/`verified` so there's exactly
+  // one fetch path, driven by exactly one 30s poll plus Realtime.
+  const { checking, profile, documents, documentsUploaded, verified, refresh } =
+    useRiderVerificationGate("require-pending");
   const [refreshing, setRefreshing] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -56,54 +65,40 @@ export default function PendingVerificationScreen() {
   const hasSubmittedDocs = documentsUploaded;
 
   const checkApprovalNow = useCallback(async (silent = false) => {
-    const session = await getSession();
-    if (!session?.token) {
-      router.replace("/phone");
-      return;
-    }
-
     if (!silent) setRefreshing(true);
     try {
-      const result = await checkRiderVerification(session.token);
-      if (!result.documentsUploaded) {
-        router.replace("/documents");
-        return;
-      }
-      if (result.verified) {
-        Alert.alert(
-          "Account Verified",
-          "Your documents have been approved. You can now use the app and go online for deliveries.",
-          [{ text: "Continue", onPress: () => router.replace("/(tabs)/home") }]
-        );
-        return;
-      }
+      await refresh();
     } catch {
       if (!silent) Alert.alert("Could not refresh", "Check your connection and try again.");
     } finally {
       if (!silent) setRefreshing(false);
     }
-  }, [router]);
+  }, [refresh]);
 
+  // Deliberately no auto-redirect to /documents when docs are incomplete —
+  // this screen must stay freely reachable via the back button while docs
+  // are still in progress (the rider tapped back from /documents on
+  // purpose). The one-time "Account Verified" alert below is the only
+  // navigation this screen ever triggers on its own.
+  const verifiedAlertShownRef = useRef(false);
   useEffect(() => {
-    void checkApprovalNow(true);
-    // Fallback poll — the Realtime subscription below delivers near-instantly
-    // once connected; this covers a session with no Supabase Auth bridge
-    // session (mint failed at login/signup) or while it's still connecting.
-    pollRef.current = setInterval(() => {
-      void checkApprovalNow(true);
-    }, 10_000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [checkApprovalNow]);
+    if (verified && !verifiedAlertShownRef.current) {
+      verifiedAlertShownRef.current = true;
+      Alert.alert(
+        "Account Verified",
+        "Your documents have been approved. You can now use the app and go online for deliveries.",
+        [{ text: "Continue", onPress: () => router.replace("/(tabs)/home") }]
+      );
+    }
+  }, [verified, router]);
 
   // Realtime: near-instant notice the moment an admin approves this rider,
   // via the narrowly-scoped Supabase Auth bridge session the backend mints
   // at login/signup solely so Realtime's RLS check (auth.uid()) has
   // something real to evaluate for this rider's own row — see
   // riderAuthBridge.service.ts / partner_own_record RLS policy. Absent
-  // session.supabaseSession just means the mint failed server-side; the poll
-  // above still covers that case.
+  // session.supabaseSession just means the mint failed server-side; the
+  // gate hook's own 30s poll still covers that case.
   useEffect(() => {
     let cancelled = false;
     restoreRiderRealtimeSession(supabase).then((driverUserId) => {
@@ -120,7 +115,7 @@ export default function PendingVerificationScreen() {
             filter: `user_id=eq.${driverUserId}`,
           },
           () => {
-            void checkApprovalNow(true);
+            void refresh();
           }
         )
         .subscribe();
@@ -131,7 +126,7 @@ export default function PendingVerificationScreen() {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
     };
-  }, [checkApprovalNow]);
+  }, [refresh]);
 
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -150,6 +145,7 @@ export default function PendingVerificationScreen() {
   if (checking) {
     return (
       <SafeAreaView style={styles.safe}>
+        <Stack.Screen options={{ animation: "fade" }} />
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.accent} />
         </View>
@@ -170,11 +166,14 @@ export default function PendingVerificationScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <Stack.Screen options={{ animation: "fade" }} />
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
         <Animated.View style={{ opacity: fadeAnim }}>
+          <VerificationNavBar active="status" />
+
           <View style={styles.hero}>
             <View style={styles.heroIcon}>
               <MaterialCommunityIcons

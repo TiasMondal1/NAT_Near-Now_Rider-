@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
@@ -34,6 +34,8 @@ import {
   type VerificationDocument,
 } from "../lib/riderVerificationDocuments";
 import { fetchRiderProfile } from "../lib/riderVerification";
+import { peekRiderVerification } from "../lib/riderVerificationCache";
+import VerificationNavBar from "../components/VerificationNavBar";
 
 const DOCUMENT_SECTIONS = [
   { key: "aadhaar_front", label: "Aadhaar Card (Front)", icon: "card-account-details-outline" as const, placeholder: "12-digit Aadhaar number", hasNumber: true },
@@ -93,14 +95,34 @@ const ALL_GROUPS: DocGroup[] = [
   { groupKey: "vehicle_photos", headerLabel: "Vehicle Photos", headerIcon: "motorbike", numberKey: null, members: ["vehicle_photo_front", "vehicle_photo_side", "vehicle_photo_rear"] },
 ];
 
+// Seeds serverDocs/numbers from a documents list — shared by the initial
+// (possibly cached) state and the real fetch, so both build the same shape.
+function docsToState(docs: VerificationDocument[]): { docs: DocsState; numbers: Record<DocKey, string> } {
+  const next = EMPTY_DOCS();
+  const nextNumbers = Object.fromEntries(DOCUMENT_SECTIONS.map((d) => [d.key, ""])) as Record<DocKey, string>;
+  for (const doc of docs) {
+    next[doc.doc_type] = doc;
+    nextNumbers[doc.doc_type] = doc.number ?? "";
+  }
+  return { docs: next, numbers: nextNumbers };
+}
+
 export default function DocumentsScreen() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  // Seed from the same cache useRiderVerificationGate populates, so a rider
+  // who already visited this session (via the verification nav bar) sees
+  // real content immediately instead of a blank spinner — the effect below
+  // still re-fetches fresh data in the background regardless.
+  const cached = peekRiderVerification();
+  const cachedSeed = cached ? docsToState(cached.documents) : null;
+  const [loading, setLoading] = useState(!cached);
   const [token, setToken] = useState<string | null>(null);
-  const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
-  const [serverDocs, setServerDocs] = useState<DocsState>(EMPTY_DOCS());
+  const [vehicleType, setVehicleType] = useState<VehicleType | null>(
+    (cached?.profile?.vehicle_type as VehicleType | null) ?? null
+  );
+  const [serverDocs, setServerDocs] = useState<DocsState>(cachedSeed?.docs ?? EMPTY_DOCS());
   const [numbers, setNumbers] = useState<Record<DocKey, string>>(
-    () => Object.fromEntries(DOCUMENT_SECTIONS.map((d) => [d.key, ""])) as Record<DocKey, string>
+    cachedSeed?.numbers ?? (Object.fromEntries(DOCUMENT_SECTIONS.map((d) => [d.key, ""])) as Record<DocKey, string>)
   );
   const [pendingFiles, setPendingFiles] = useState<Partial<Record<DocKey, PickedDocFile>>>({});
   const [savingKey, setSavingKey] = useState<DocKey | null>(null);
@@ -121,12 +143,7 @@ export default function DocumentsScreen() {
           fetchVerificationDocuments(session.token),
         ]);
         setVehicleType((profile?.vehicle_type as VehicleType | null) ?? null);
-        const next = EMPTY_DOCS();
-        const nextNumbers = { ...numbers };
-        for (const doc of docs) {
-          next[doc.doc_type] = doc;
-          nextNumbers[doc.doc_type] = doc.number ?? "";
-        }
+        const { docs: next, numbers: nextNumbers } = docsToState(docs);
         setServerDocs(next);
         setNumbers(nextNumbers);
       } catch {
@@ -343,6 +360,7 @@ export default function DocumentsScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
+        <Stack.Screen options={{ animation: "fade" }} />
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.accent} />
         </View>
@@ -352,6 +370,7 @@ export default function DocumentsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <Stack.Screen options={{ animation: "fade" }} />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
@@ -369,6 +388,8 @@ export default function DocumentsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <VerificationNavBar active="documents" />
+
         <View style={styles.notice}>
           <MaterialCommunityIcons name="shield-lock-outline" size={22} color={Colors.accent} />
           <Text style={styles.noticeText}>

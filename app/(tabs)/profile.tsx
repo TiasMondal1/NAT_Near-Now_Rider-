@@ -301,7 +301,10 @@ export default function ProfileScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        // Android already resizes via AndroidManifest's
+        // windowSoftInputMode="adjustResize" — stacking "height" behavior on
+        // top of that double-shrinks the content on Android.
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
       <View style={styles.responsiveWrap}>

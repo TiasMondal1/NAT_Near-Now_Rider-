@@ -13,13 +13,14 @@ import {
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
 import { clearSession, getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import type { VehicleType } from "../lib/riderVerificationDocuments";
+import VerificationNavBar from "../components/VerificationNavBar";
 
 const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
   { value: "cycle", label: "Cycle", icon: "bike" },
@@ -39,6 +40,15 @@ export default function SignupScreen() {
   const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Reached via direct navigation (the verification nav bar, or the back
+  // button from documents/pending-verification) rather than fresh off OTP
+  // verify — if signup was already completed, this screen shows the
+  // submitted details read-only instead of a blank editable form. Riders
+  // can only actually change these values later, from the Profile page,
+  // via the existing admin-reviewed change-request flow.
+  const [viewOnly, setViewOnly] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -49,10 +59,31 @@ export default function SignupScreen() {
     (async () => {
       if (phoneParam) {
         setPhone(String(phoneParam));
-        return;
+        return; // fresh from OTP verify — editable mode, nothing else to load
       }
       const session = await getSession();
       if (session?.user?.phone) setPhone(session.user.phone);
+      if (!session?.token || session.needsSignupCompletion) return;
+
+      setViewOnly(true);
+      setLoadingProfile(true);
+      try {
+        const res = await apiFetch<{
+          success: boolean;
+          profile?: { name?: string; email?: string; address?: string; phone?: string; vehicle_type?: string };
+        }>("/delivery-partner/profile", {}, session.token);
+        if (res.success && res.profile) {
+          setName(res.profile.name || "");
+          setEmail(res.profile.email || "");
+          setAddress(res.profile.address || "");
+          if (res.profile.phone) setPhone(res.profile.phone);
+          if (res.profile.vehicle_type) setVehicleType(res.profile.vehicle_type as VehicleType);
+        }
+      } catch {
+        // non-fatal — screen still shows whatever session info it already has
+      } finally {
+        setLoadingProfile(false);
+      }
     })();
   }, [phoneParam]);
 
@@ -132,9 +163,13 @@ export default function SignupScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <Stack.Screen options={{ animation: "fade" }} />
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        // Android already resizes via AndroidManifest's
+        // windowSoftInputMode="adjustResize" — stacking "height" behavior on
+        // top of that double-shrinks the content on Android.
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
         <ScrollView
@@ -145,93 +180,122 @@ export default function SignupScreen() {
           automaticallyAdjustKeyboardInsets
         >
           <Animated.View style={{ opacity: fadeAnim }}>
+            {viewOnly && <VerificationNavBar active="details" />}
+
             <View style={styles.headerIcon}>
-              <MaterialCommunityIcons name="account-check" size={32} color={Colors.accent} />
+              <MaterialCommunityIcons name={viewOnly ? "account-details" : "account-check"} size={32} color={Colors.accent} />
             </View>
-            <Text style={styles.title}>Complete your profile</Text>
-            <Text style={styles.subtitle}>Set up your delivery partner account</Text>
+            <Text style={styles.title}>{viewOnly ? "Your Details" : "Complete your profile"}</Text>
+            <Text style={styles.subtitle}>
+              {viewOnly ? "Submitted — shown read-only until you're verified" : "Set up your delivery partner account"}
+            </Text>
 
-            <View style={styles.card}>
-              <Text style={styles.label}>Phone</Text>
-              <View style={styles.readOnlyField}>
-                <MaterialCommunityIcons name="phone" size={18} color={Colors.textMuted} />
-                <Text style={styles.readOnlyText}>{phone}</Text>
-              </View>
+            {loadingProfile ? (
+              <ActivityIndicator color={Colors.accent} style={{ marginVertical: Spacing.xl }} />
+            ) : (
+              <>
+                <View style={styles.card}>
+                  <Text style={styles.label}>Phone</Text>
+                  <View style={styles.readOnlyField}>
+                    <MaterialCommunityIcons name="phone" size={18} color={Colors.textMuted} />
+                    <Text style={styles.readOnlyText}>{phone}</Text>
+                  </View>
 
-              <Text style={styles.label}>Full Name *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Your full name"
-                placeholderTextColor={Colors.textMuted}
-                value={name}
-                onChangeText={setName}
-                autoFocus
-              />
+                  <Text style={styles.label}>Full Name *</Text>
+                  <TextInput
+                    style={[styles.input, viewOnly && styles.inputReadOnly]}
+                    placeholder="Your full name"
+                    placeholderTextColor={Colors.textMuted}
+                    value={name}
+                    onChangeText={setName}
+                    autoFocus={!viewOnly}
+                    editable={!viewOnly}
+                  />
 
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={[styles.input, email.trim() && !isEmailValid && styles.inputError]}
-                placeholder="email@example.com"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={email}
-                onChangeText={setEmail}
-              />
-              {email.trim() && !isEmailValid && (
-                <Text style={styles.errorHint}>Please enter a valid email address</Text>
-              )}
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={[styles.input, viewOnly && styles.inputReadOnly, email.trim() && !isEmailValid && styles.inputError]}
+                    placeholder="email@example.com"
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={email}
+                    onChangeText={setEmail}
+                    editable={!viewOnly}
+                  />
+                  {email.trim() && !isEmailValid && (
+                    <Text style={styles.errorHint}>Please enter a valid email address</Text>
+                  )}
 
-              <Text style={styles.label}>Address</Text>
-              <TextInput
-                style={[styles.input, { height: 80, textAlignVertical: "top", paddingTop: 12 }]}
-                placeholder="Your address"
-                placeholderTextColor={Colors.textMuted}
-                multiline
-                value={address}
-                onChangeText={setAddress}
-              />
+                  <Text style={styles.label}>Address</Text>
+                  <TextInput
+                    style={[styles.input, viewOnly && styles.inputReadOnly, { height: 80, textAlignVertical: "top", paddingTop: 12 }]}
+                    placeholder="Your address"
+                    placeholderTextColor={Colors.textMuted}
+                    multiline
+                    value={address}
+                    onChangeText={setAddress}
+                    editable={!viewOnly}
+                  />
 
-              <Text style={styles.label}>Vehicle Type *</Text>
-              <View style={styles.vehicleGrid}>
-                {VEHICLE_OPTIONS.map((vehicle) => {
-                  const active = vehicleType === vehicle.value;
-                  return (
-                    <TouchableOpacity
-                      key={vehicle.value}
-                      style={[styles.vehicleOption, active && styles.vehicleOptionActive]}
-                      onPress={() => setVehicleType(vehicle.value)}
-                      activeOpacity={0.8}
-                    >
-                      <MaterialCommunityIcons
-                        name={vehicle.icon as any}
-                        size={22}
-                        color={active ? Colors.accent : Colors.textMuted}
-                      />
-                      <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
-                        {vehicle.label}
+                  <Text style={styles.label}>Vehicle Type *</Text>
+                  <View style={styles.vehicleGrid}>
+                    {VEHICLE_OPTIONS.map((vehicle) => {
+                      const active = vehicleType === vehicle.value;
+                      return (
+                        <TouchableOpacity
+                          key={vehicle.value}
+                          style={[styles.vehicleOption, active && styles.vehicleOptionActive, viewOnly && !active && styles.vehicleOptionDisabled]}
+                          onPress={() => !viewOnly && setVehicleType(vehicle.value)}
+                          activeOpacity={viewOnly ? 1 : 0.8}
+                          disabled={viewOnly}
+                        >
+                          <MaterialCommunityIcons
+                            name={vehicle.icon as any}
+                            size={22}
+                            color={active ? Colors.accent : Colors.textMuted}
+                          />
+                          <Text style={[styles.vehicleLabel, active && styles.vehicleLabelActive]}>
+                            {vehicle.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.vehicleHint}>
+                    Vehicle Registration is only required for Bike/Scooty — not Cycle/E-Bike.
+                  </Text>
+                </View>
+
+                {viewOnly ? (
+                  <View style={styles.nextStepCard}>
+                    <View style={styles.nextStepIcon}>
+                      <MaterialCommunityIcons name="lock-outline" size={22} color={Colors.accent} />
+                    </View>
+                    <View style={styles.nextStepCopy}>
+                      <Text style={styles.nextStepTitle}>These details are locked for now</Text>
+                      <Text style={styles.nextStepText}>
+                        Changes aren&apos;t possible here. Once you&apos;re verified, you can update your name, email, and address from your Profile page.
                       </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Text style={styles.vehicleHint}>
-                Vehicle Registration is only required for Bike/Scooty — not Cycle/E-Bike.
-              </Text>
-            </View>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.nextStepCard}>
+                    <View style={styles.nextStepIcon}>
+                      <MaterialCommunityIcons name="file-document-edit-outline" size={22} color={Colors.accent} />
+                    </View>
+                    <View style={styles.nextStepCopy}>
+                      <Text style={styles.nextStepTitle}>Document verification is next</Text>
+                      <Text style={styles.nextStepText}>
+                        After signup, upload your Aadhaar card, PAN card and vehicle details on the secure document page.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
 
-            <View style={styles.nextStepCard}>
-              <View style={styles.nextStepIcon}>
-                <MaterialCommunityIcons name="file-document-edit-outline" size={22} color={Colors.accent} />
-              </View>
-              <View style={styles.nextStepCopy}>
-                <Text style={styles.nextStepTitle}>Document verification is next</Text>
-                <Text style={styles.nextStepText}>
-                  After signup, upload your Aadhaar card, PAN card and vehicle details on the secure document page.
-                </Text>
-              </View>
-            </View>
-
+            {!viewOnly && (
             <TouchableOpacity
               style={[styles.button, (!isValid || !isEmailValid) && styles.buttonDisabled]}
               onPress={handleSignup}
@@ -247,10 +311,13 @@ export default function SignupScreen() {
                 </View>
               )}
             </TouchableOpacity>
+            )}
 
-            <TouchableOpacity style={styles.backRow} onPress={handleGoBack} disabled={loading}>
-              <Text style={styles.backText}>Go back</Text>
-            </TouchableOpacity>
+            {!viewOnly && (
+              <TouchableOpacity style={styles.backRow} onPress={handleGoBack} disabled={loading}>
+                <Text style={styles.backText}>Go back</Text>
+              </TouchableOpacity>
+            )}
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -357,6 +424,7 @@ const styles = StyleSheet.create({
   buttonInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   buttonText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
   inputError: { borderColor: Colors.danger, borderWidth: 1.5 },
+  inputReadOnly: { backgroundColor: Colors.surfaceLight, color: Colors.textSecondary },
   errorHint: { color: Colors.danger, fontSize: 12, marginTop: 4, marginLeft: 2 },
   vehicleGrid: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm, marginTop: Spacing.sm },
   vehicleOption: {
@@ -372,6 +440,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   vehicleOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
+  vehicleOptionDisabled: { opacity: 0.5 },
   vehicleLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: "600" },
   vehicleLabelActive: { color: Colors.accentDark },
   vehicleHint: { color: Colors.textMuted, fontSize: 11, marginTop: Spacing.sm, lineHeight: 15 },
