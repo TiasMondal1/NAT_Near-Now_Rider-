@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Linking,
   ScrollView,
   StyleSheet,
@@ -56,11 +55,6 @@ export default function PendingVerificationScreen() {
     useRiderVerificationGate("require-pending");
   const [refreshing, setRefreshing] = useState(false);
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-  }, [fadeAnim]);
 
   const hasSubmittedDocs = documentsUploaded;
 
@@ -171,7 +165,7 @@ export default function PendingVerificationScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View style={{ opacity: fadeAnim }}>
+        <View>
           <VerificationNavBar active="status" />
 
           <View style={styles.hero}>
@@ -299,25 +293,31 @@ export default function PendingVerificationScreen() {
             )}
           </TouchableOpacity>
 
-          <Text style={styles.linkBtnText}>Need help? Contact an admin:</Text>
-          {ADMIN_CONTACTS.map((admin) => (
-            <TouchableOpacity
-              key={admin.phone}
-              style={styles.linkBtn}
-              onPress={() => Linking.openURL(`tel:${admin.phone}`)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.linkBtnText}>
-                {admin.name} — {formatPhoneForDisplay(admin.phone)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          <View style={styles.helpCard}>
+            <Text style={styles.sectionTitle}>Contact an admin</Text>
+            {ADMIN_CONTACTS.map((admin) => (
+              <TouchableOpacity
+                key={admin.phone}
+                style={styles.adminRow}
+                onPress={() => Linking.openURL(`tel:${admin.phone}`)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.adminName}>{admin.name}</Text>
+                  <Text style={styles.adminPhone}>{formatPhoneForDisplay(admin.phone)}</Text>
+                </View>
+                <View style={styles.adminCallBtn}>
+                  <MaterialCommunityIcons name="phone" size={16} color={Colors.accent} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.85}>
             <MaterialCommunityIcons name="logout" size={18} color={Colors.danger} />
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -454,8 +454,25 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
   secondaryBtnText: { color: Colors.accent, fontSize: 14, fontWeight: "700" },
-  linkBtn: { alignItems: "center", paddingVertical: Spacing.sm, marginBottom: Spacing.sm },
-  linkBtnText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
+  helpCard: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  adminRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md, paddingVertical: Spacing.sm },
+  adminName: { color: Colors.text, fontSize: 14, fontWeight: "700" },
+  adminPhone: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
+  adminCallBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.accentLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   logoutBtn: {
     flexDirection: "row",
     alignItems: "center",

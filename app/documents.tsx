@@ -159,19 +159,7 @@ export default function DocumentsScreen() {
     (g) => g.groupKey !== "vehicle_registration" || isVehicleRegistrationRequired(vehicleType)
   );
 
-  const pickImage = async (key: DocKey) => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (permission.status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to upload documents.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: false,
-      quality: 0.9,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
+  const applyPickedImage = (key: DocKey, asset: ImagePicker.ImagePickerAsset) => {
     const mimeType = asset.mimeType || "image/jpeg";
     if (asset.fileSize && asset.fileSize > MAX_FILE_SIZE_BYTES) {
       Alert.alert("File too large", FORMATS_DISCLAIMER);
@@ -186,6 +174,36 @@ export default function DocumentsScreen() {
         size: asset.fileSize,
       },
     }));
+  };
+
+  const pickImage = async (key: DocKey) => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo library access to upload documents.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    applyPickedImage(key, result.assets[0]);
+  };
+
+  const takePhoto = async (key: DocKey) => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (permission.status !== "granted") {
+      Alert.alert("Permission needed", "Allow camera access to take a photo.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    applyPickedImage(key, result.assets[0]);
   };
 
   const pickPdf = async (key: DocKey) => {
@@ -354,9 +372,6 @@ export default function DocumentsScreen() {
     return { icon: "clock-outline", text: "Pending review", color: Colors.warning };
   };
 
-  const uploadedCount = groups.flatMap((g) => g.members).filter((k) => serverDocs[k]?.url).length;
-  const totalRequired = groups.flatMap((g) => g.members).length;
-
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -371,21 +386,6 @@ export default function DocumentsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <Stack.Screen options={{ animation: "fade" }} />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace("/pending-verification");
-          }}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>Upload Documents</Text>
-          <Text style={styles.subtitle}>{uploadedCount} of {totalRequired} submitted</Text>
-        </View>
-      </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <VerificationNavBar active="documents" />
@@ -584,6 +584,18 @@ export default function DocumentsScreen() {
               onPress={() => {
                 const key = pickerSheetKey;
                 setPickerSheetKey(null);
+                if (key) takePhoto(key);
+              }}
+            >
+              <MaterialCommunityIcons name="camera-outline" size={20} color={Colors.accent} />
+              <Text style={styles.pickerOptionText}>Take Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pickerOption}
+              activeOpacity={0.7}
+              onPress={() => {
+                const key = pickerSheetKey;
+                setPickerSheetKey(null);
                 if (key) pickImage(key);
               }}
             >
@@ -619,29 +631,6 @@ export default function DocumentsScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  header: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Colors.surface,
-    marginRight: Spacing.md,
-  },
-  headerCopy: { flex: 1 },
-  title: { color: Colors.text, fontSize: 22, fontWeight: "800" },
-  subtitle: { color: Colors.textMuted, fontSize: 13, marginTop: 2 },
   scroll: {
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,

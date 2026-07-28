@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
-  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
@@ -20,6 +19,7 @@ import { apiFetch } from "../constants/api";
 import { clearSession, getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import type { VehicleType } from "../lib/riderVerificationDocuments";
+import { peekRiderVerification } from "../lib/riderVerificationCache";
 import VerificationNavBar from "../components/VerificationNavBar";
 
 const VEHICLE_OPTIONS: { value: VehicleType; label: string; icon: string }[] = [
@@ -33,27 +33,33 @@ export default function SignupScreen() {
   const router = useRouter();
   const { phone: phoneParam, signupTicket } = useLocalSearchParams<{ phone: string; signupTicket?: string }>();
 
-  const [phone, setPhone] = useState(String(phoneParam || ""));
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
-  const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
-  const [loading, setLoading] = useState(false);
-
   // Reached via direct navigation (the verification nav bar, or the back
   // button from documents/pending-verification) rather than fresh off OTP
   // verify — if signup was already completed, this screen shows the
   // submitted details read-only instead of a blank editable form. Riders
   // can only actually change these values later, from the Profile page,
   // via the existing admin-reviewed change-request flow.
-  const [viewOnly, setViewOnly] = useState(false);
+  //
+  // `phoneParam` is available synchronously (route params, no AsyncStorage
+  // read needed), so viewOnly can be decided on the very first render
+  // instead of waiting for an async session check — that's what let
+  // Documents/Status render instantly while this screen still sat behind a
+  // blank spinner. Seeded the same way from the shared verification cache
+  // (populated by whichever of the 3 screens the rider hit first this
+  // session) so name/vehicle type also appear immediately; only
+  // email/address (not in that cache) and a corrected phone come in
+  // slightly later from the network, without blocking the rest of the page.
+  const cached = !phoneParam ? peekRiderVerification() : null;
+  const [viewOnly, setViewOnly] = useState(!phoneParam);
+  const [phone, setPhone] = useState(String(phoneParam || ""));
+  const [name, setName] = useState(cached?.profile?.name || "");
+  const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [vehicleType, setVehicleType] = useState<VehicleType | null>(
+    (cached?.profile?.vehicle_type as VehicleType | null) ?? null
+  );
+  const [loading, setLoading] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
-
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-  }, [fadeAnim]);
 
   useEffect(() => {
     (async () => {
@@ -63,10 +69,16 @@ export default function SignupScreen() {
       }
       const session = await getSession();
       if (session?.user?.phone) setPhone(session.user.phone);
-      if (!session?.token || session.needsSignupCompletion) return;
-
+      if (!session?.token || session.needsSignupCompletion) {
+        setViewOnly(false);
+        return;
+      }
       setViewOnly(true);
-      setLoadingProfile(true);
+
+      // Only show a blocking spinner if nothing was available from cache —
+      // otherwise the page already has real content on screen and this
+      // fetch just fills in email/address/phone in the background.
+      if (!cached?.profile) setLoadingProfile(true);
       try {
         const res = await apiFetch<{
           success: boolean;
@@ -80,11 +92,16 @@ export default function SignupScreen() {
           if (res.profile.vehicle_type) setVehicleType(res.profile.vehicle_type as VehicleType);
         }
       } catch {
-        // non-fatal — screen still shows whatever session info it already has
+        // non-fatal — screen still shows whatever session/cache info it already has
       } finally {
         setLoadingProfile(false);
       }
     })();
+    // `cached` is intentionally read only once at mount to decide whether to
+    // show a spinner, not re-evaluated reactively — re-running this whole
+    // effect on every cache mutation elsewhere in the app would refetch the
+    // profile unnecessarily.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneParam]);
 
   const isValid = name.trim().length >= 2 && !!vehicleType;
@@ -94,6 +111,20 @@ export default function SignupScreen() {
   const handleGoBack = async () => {
     await clearSession();
     router.replace("/phone");
+  };
+
+  const handleLogout = () => {
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          await clearSession();
+          router.replace("/phone");
+        },
+      },
+    ]);
   };
 
   const handleSignup = async () => {
@@ -179,7 +210,7 @@ export default function SignupScreen() {
           showsVerticalScrollIndicator={false}
           automaticallyAdjustKeyboardInsets
         >
-          <Animated.View style={{ opacity: fadeAnim }}>
+          <View>
             {viewOnly && <VerificationNavBar active="details" />}
 
             <View style={styles.headerIcon}>
@@ -318,7 +349,14 @@ export default function SignupScreen() {
                 <Text style={styles.backText}>Go back</Text>
               </TouchableOpacity>
             )}
-          </Animated.View>
+
+            {viewOnly && (
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                <MaterialCommunityIcons name="logout" size={18} color={Colors.danger} />
+                <Text style={styles.logoutText}>Logout</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -446,4 +484,17 @@ const styles = StyleSheet.create({
   vehicleHint: { color: Colors.textMuted, fontSize: 11, marginTop: Spacing.sm, lineHeight: 15 },
   backRow: { alignItems: "center", marginTop: Spacing.lg },
   backText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
+  logoutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    marginTop: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.dangerLight,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.dangerLight,
+  },
+  logoutText: { color: Colors.danger, fontSize: 15, fontWeight: "600" },
 });
