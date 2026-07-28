@@ -30,6 +30,14 @@ export function useRiderVerificationGate(mode: GateMode) {
   const [documents, setDocuments] = useState<VerificationDocument[]>(cached?.documents ?? []);
   const [documentsUploaded, setDocumentsUploaded] = useState(cached?.documentsUploaded ?? false);
   const [verified, setVerified] = useState(cached?.verified ?? false);
+  // Mirrors `verified` for evaluate() to read without going stale — evaluate
+  // is a useCallback with only `mode` in its deps, so referencing `verified`
+  // directly inside it would close over whatever value existed when this
+  // particular evaluate() instance was created, not the current one.
+  const verifiedRef = useRef(verified);
+  useEffect(() => {
+    verifiedRef.current = verified;
+  }, [verified]);
 
   const evaluate = useCallback(async () => {
     const session = await getSession();
@@ -42,8 +50,15 @@ export function useRiderVerificationGate(mode: GateMode) {
     try {
       result = await checkRiderVerification(session.token);
     } catch {
-      // Network failure while entering the main app: keep rider locked out.
-      if (mode === "require-verified") {
+      // A network failure here doesn't mean the rider actually failed
+      // verification — it just means this particular check couldn't
+      // complete. Only treat it as a lockout if we've never actually
+      // confirmed this rider is verified: a transient blip (common right
+      // when the app resumes/reconnects, which the AppState-triggered
+      // re-check below now runs on every single time) shouldn't bounce an
+      // already-verified rider out to /pending-verification just because
+      // one connectivity hiccup happened to coincide with a re-check.
+      if (mode === "require-verified" && !verifiedRef.current) {
         router.replace("/pending-verification");
       }
       return null;

@@ -94,6 +94,15 @@ export default function HomeScreen() {
   const router = useRouter();
   const [isOnline, setIsOnline] = useState(false);
   const [driverStatus, setDriverStatus] = useState<string>("");
+  // Mirrors lib/riderVerification.ts's isRiderVerified() precedence
+  // (is_approved is the backend source of truth; status=active is also
+  // accepted) instead of trusting status alone — status and is_approved are
+  // normally kept in lockstep by every known mutation path (admin
+  // revoke, demoteRiderIfDocsIncomplete), but this is a second, independent
+  // check rather than relying on that always staying true forever. Defaults
+  // true since the whole screen is gated behind `loading` until the first
+  // profile fetch below sets the real value.
+  const [isApproved, setIsApproved] = useState(true);
   const [toggling, setToggling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,6 +141,14 @@ export default function HomeScreen() {
     () => offers.filter((o) => !ignoredOfferIds.has(o.offer_id)),
     [offers, ignoredOfferIds]
   );
+
+  // Deliberately stricter than isRiderVerified() (which accepts EITHER
+  // is_approved===true OR status==="active" alone) — this requires BOTH,
+  // since status and is_approved are normally kept in lockstep by every
+  // known mutation path (admin revoke, demoteRiderIfDocsIncomplete) and an
+  // AND is the safer default for gating a live, order-accepting action. See
+  // the isApproved state declaration above for why this second check exists.
+  const canGoOnline = driverStatus === "active" && isApproved;
 
   const locationSub = useRef<Location.LocationSubscription | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -256,13 +273,14 @@ export default function HomeScreen() {
       }
 
       try {
-        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string } }>(
+        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string; is_approved?: boolean } }>(
           "/delivery-partner/profile",
           {},
           session.token
         );
         setIsOnline(profileRes.profile.is_online);
         setDriverStatus(profileRes.profile.status ?? "");
+        setIsApproved(profileRes.profile.is_approved !== false);
       } catch {}
 
       setLoading(false);
@@ -300,10 +318,11 @@ export default function HomeScreen() {
 
     const checkVerification = async () => {
       try {
-        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string } }>(
+        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string; is_approved?: boolean } }>(
           "/delivery-partner/profile", {}, token
         );
         const newStatus = profileRes.profile.status ?? "";
+        setIsApproved(profileRes.profile.is_approved !== false);
         if (newStatus === "active") applyActiveStatus();
       } catch {}
     };
@@ -599,7 +618,7 @@ export default function HomeScreen() {
   };
 
   const handleToggle = async (value: boolean) => {
-    if (toggling || driverStatus !== "active") return;
+    if (toggling || !canGoOnline) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
     setToggling(true);
@@ -716,9 +735,9 @@ export default function HomeScreen() {
             <Switch
               value={isOnline}
               onValueChange={handleToggle}
-              disabled={toggling || driverStatus !== "active"}
+              disabled={toggling || !canGoOnline}
               trackColor={{ false: Colors.border, true: Colors.accentLight }}
-              thumbColor={toggling || driverStatus !== "active" ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
+              thumbColor={toggling || !canGoOnline ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
             />
           </View>
         </View>
@@ -754,7 +773,7 @@ export default function HomeScreen() {
                   {isOnline ? "Waiting for orders..." : "Go online to receive orders"}
                 </Text>
               </View>
-              {!isOnline && driverStatus === "active" && (
+              {!isOnline && canGoOnline && (
                 <TouchableOpacity
                   style={[styles.goOnlineBtn, toggling && { opacity: 0.5 }]}
                   onPress={() => handleToggle(true)}
