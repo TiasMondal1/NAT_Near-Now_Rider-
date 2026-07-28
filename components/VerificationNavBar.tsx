@@ -3,17 +3,18 @@ import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
 
-type TabKey = "details" | "documents" | "status";
+type TabKey = "details" | "documents" | "status" | "billing";
 
 const TABS: {
   key: TabKey;
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
-  route: "/signup" | "/documents" | "/pending-verification";
+  route: "/signup" | "/documents" | "/pending-verification" | "/billing-info";
 }[] = [
   { key: "details", label: "Details", icon: "account-outline", route: "/signup" },
   { key: "status", label: "Status", icon: "timer-sand", route: "/pending-verification" },
   { key: "documents", label: "Documents", icon: "file-document-outline", route: "/documents" },
+  { key: "billing", label: "Billing", icon: "credit-card-outline", route: "/billing-info" },
 ];
 
 /**
