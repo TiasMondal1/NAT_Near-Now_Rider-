@@ -1,24 +1,23 @@
 /**
  * Supabase Storage helpers for uploading images from the app.
  *
- * Buckets used directly from the app:
- *   delivery_partner_image    – rider's own profile photo (public)
- *   delivery_partner_vehicle  – rider's vehicle photo (public)
+ * Bucket used directly from the app:
+ *   delivery_partner_image – rider's own profile photo (public)
  *
- * Both should be PUBLIC so the returned URL is directly usable in
+ * Should be PUBLIC so the returned URL is directly usable in
  * <Image source={{ uri }}> without signed-URL expiry.
  *
- * Verification documents (Aadhaar, PAN, Driving License, Vehicle RC) are NOT
- * uploaded from here — that bucket (delivery-partner-documents) is private,
- * and uploads are proxied through the backend instead (see
- * lib/riderVerificationDocuments.ts), since this app has no real Supabase
- * Auth session to scope a client-side storage policy to.
+ * Verification documents (Aadhaar, PAN, Driving License, Vehicle RC, and the
+ * 3 vehicle photos) are NOT uploaded from here — that bucket
+ * (delivery-partner-documents) is private, and uploads are proxied through
+ * the backend instead (see lib/riderVerificationDocuments.ts), since this app
+ * has no real Supabase Auth session to scope a client-side storage policy to.
  *
- * Buckets, the delivery_partners.profile_image_url/vehicle_image_url columns,
- * and the anon-key write policies these uploads rely on are created by
+ * The bucket, the delivery_partners.profile_image_url column, and the
+ * anon-key write policy this upload relies on are created by
  * supabase/migrations/20260804000000_delivery_partner_verification_documents.sql
  * in the near-and-now repo — mirrors the shopkeeper app's
- * store-images/store-owner-images pair exactly (20260802000000).
+ * store-owner-images bucket.
  *
  * This supersedes the rider's previous profile-photo flow (base64 POST to
  * PATCH /delivery-partner/profile-image, writing to the rider-avatars
@@ -75,14 +74,4 @@ export async function uploadRiderImage(
   const ext = localUri.split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `${riderId}/avatar.${ext}`;
   return uploadImage('delivery_partner_image', path, localUri);
-}
-
-/** Upload the rider's vehicle photo. */
-export async function uploadVehicleImage(
-  riderId: string,
-  localUri: string
-): Promise<UploadResult> {
-  const ext = localUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const path = `${riderId}/vehicle.${ext}`;
-  return uploadImage('delivery_partner_vehicle', path, localUri);
 }

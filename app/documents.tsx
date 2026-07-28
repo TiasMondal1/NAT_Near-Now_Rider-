@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { getSession } from "../session";
 import {
@@ -41,10 +43,18 @@ const DOCUMENT_SECTIONS = [
   { key: "driving_license_front", label: "Driving License (Front)", icon: "card-text-outline" as const, placeholder: "Driving license number", hasNumber: true },
   { key: "driving_license_back", label: "Driving License (Back)", icon: "card-text-outline" as const, placeholder: "", hasNumber: false },
   { key: "vehicle_registration", label: "Vehicle Registration (RC)", icon: "file-document-outline" as const, placeholder: "Vehicle registration number", hasNumber: true },
+  { key: "vehicle_photo_front", label: "Vehicle Photo (Front)", icon: "motorbike" as const, placeholder: "", hasNumber: false },
+  { key: "vehicle_photo_side", label: "Vehicle Photo (Side)", icon: "motorbike" as const, placeholder: "", hasNumber: false },
+  { key: "vehicle_photo_rear", label: "Vehicle Photo (Rear)", icon: "motorbike" as const, placeholder: "", hasNumber: false },
 ] as const;
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
-const FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP · Max size 5MB";
+const FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP, PDF · Max size 5MB";
+// Vehicle photos are plain photos, not legal/identity documents — a PDF
+// doesn't make sense there, so that upload slot only ever offers the image
+// picker (see VEHICLE_PHOTO_KEYS below) and shows this narrower disclaimer.
+const PHOTO_ONLY_FORMATS_DISCLAIMER = "Accepted formats: JPG, PNG, WEBP · Max size 5MB";
+const VEHICLE_PHOTO_KEYS = new Set<RequiredDocKey>(["vehicle_photo_front", "vehicle_photo_side", "vehicle_photo_rear"]);
 
 type DocKey = RequiredDocKey;
 type DocsState = Record<DocKey, VerificationDocument | null>;
@@ -59,6 +69,7 @@ const EMPTY_DOCS = (): DocsState =>
 function extFromMime(mime: string): string {
   if (mime === "image/png") return "png";
   if (mime === "image/webp") return "webp";
+  if (mime === "application/pdf") return "pdf";
   return "jpg";
 }
 
@@ -66,7 +77,10 @@ function extFromMime(mime: string): string {
  * Aadhaar and PAN each combine their front/back keys into one card (shared
  * header, one Document Number field from the front side). Driving License
  * does the same. Vehicle Registration is a single-key group, only shown when
- * the selected vehicle type actually requires it (bike/scooty).
+ * the selected vehicle type actually requires it (bike/scooty). Vehicle
+ * Photos is a 3-key group (front/side/rear), shown unconditionally for every
+ * vehicle type — even cycle/e-bike riders, who skip Vehicle Registration,
+ * still need it.
  */
 type DocGroup = {
   groupKey: string;
@@ -81,6 +95,7 @@ const ALL_GROUPS: DocGroup[] = [
   { groupKey: "pan", headerLabel: "PAN Card", headerIcon: "card-outline", numberKey: "pan_front", members: ["pan_front", "pan_back"] },
   { groupKey: "driving_license", headerLabel: "Driving License", headerIcon: "card-text-outline", numberKey: "driving_license_front", members: ["driving_license_front", "driving_license_back"] },
   { groupKey: "vehicle_registration", headerLabel: "Vehicle Registration (RC)", headerIcon: "file-document-outline", numberKey: "vehicle_registration", members: ["vehicle_registration"] },
+  { groupKey: "vehicle_photos", headerLabel: "Vehicle Photos", headerIcon: "motorbike", numberKey: null, members: ["vehicle_photo_front", "vehicle_photo_side", "vehicle_photo_rear"] },
 ];
 
 export default function DocumentsScreen() {
@@ -159,6 +174,36 @@ export default function DocumentsScreen() {
         size: asset.fileSize,
       },
     }));
+  };
+
+  const pickPdf = async (key: DocKey) => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/pdf",
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    if (asset.size && asset.size > MAX_FILE_SIZE_BYTES) {
+      Alert.alert("File too large", FORMATS_DISCLAIMER);
+      return;
+    }
+    setPendingFiles((prev) => ({
+      ...prev,
+      [key]: { uri: asset.uri, name: asset.name || "document.pdf", type: "application/pdf", size: asset.size },
+    }));
+  };
+
+  // Vehicle photos go straight to the image picker (a PDF makes no sense for
+  // an actual photo of the vehicle); every other document offers a choice via
+  // pickerSheetKey below, since identity/registration docs are often scanned
+  // to PDF.
+  const [pickerSheetKey, setPickerSheetKey] = useState<DocKey | null>(null);
+  const handleUploadPress = (key: DocKey) => {
+    if (VEHICLE_PHOTO_KEYS.has(key)) {
+      pickImage(key);
+      return;
+    }
+    setPickerSheetKey(key);
   };
 
   const saveOne = async (key: DocKey): Promise<VerificationDocument | null> => {
@@ -368,7 +413,9 @@ export default function DocumentsScreen() {
 
               {numberSection && (
                 <>
-                  <Text style={styles.inputLabel}>Document Number</Text>
+                  <Text style={styles.inputLabel}>
+                    {group.groupKey === "vehicle_registration" ? "Vehicle Registration Number" : "Document Number"}
+                  </Text>
                   <TextInput
                     style={styles.input}
                     value={numbers[numberSection.key]}
@@ -377,6 +424,9 @@ export default function DocumentsScreen() {
                     placeholderTextColor={Colors.textMuted}
                     autoCapitalize="characters"
                   />
+                  {group.groupKey === "vehicle_registration" && (
+                    <Text style={styles.formatHintText}>This also sets the Vehicle Number shown on your profile.</Text>
+                  )}
                   {(() => {
                     const format = DOC_NUMBER_FORMATS[numberSection.key];
                     if (!format) return null;
@@ -401,6 +451,12 @@ export default function DocumentsScreen() {
                 const isSavingThis = savingKey === memberKey;
                 const previewUri = pendingFile?.uri ?? doc?.url ?? null;
                 const isMultiMember = group.members.length > 1;
+                const isPdf = pendingFile
+                  ? pendingFile.type === "application/pdf"
+                  : !!doc?.url?.toLowerCase().includes(".pdf");
+                const formatsDisclaimer = VEHICLE_PHOTO_KEYS.has(memberKey)
+                  ? PHOTO_ONLY_FORMATS_DISCLAIMER
+                  : FORMATS_DISCLAIMER;
 
                 return (
                   <View key={memberKey} style={idx > 0 ? styles.memberBlockSpaced : undefined}>
@@ -424,32 +480,41 @@ export default function DocumentsScreen() {
                     <TouchableOpacity
                       style={[styles.uploadArea, (pendingFile || doc?.url) && styles.uploadAreaFilled]}
                       activeOpacity={0.8}
-                      onPress={() => pickImage(memberKey)}
+                      onPress={() => handleUploadPress(memberKey)}
                       disabled={isSavingThis}
                     >
                       {isSavingThis ? (
                         <ActivityIndicator color={Colors.accent} />
                       ) : previewUri ? (
-                        <>
-                          <Image source={{ uri: previewUri }} style={styles.preview} />
-                          <View style={styles.changeOverlay}>
-                            <MaterialCommunityIcons name="camera" size={16} color="#fff" />
-                            <Text style={styles.changeText}>Change</Text>
+                        isPdf ? (
+                          <View style={styles.pdfChip}>
+                            <MaterialCommunityIcons name="file-document" size={28} color={Colors.accent} />
+                            <Text style={styles.pdfChipText} numberOfLines={1}>
+                              {pendingFile?.name || "Document.pdf"}
+                            </Text>
                           </View>
-                        </>
+                        ) : (
+                          <>
+                            <Image source={{ uri: previewUri }} style={styles.preview} />
+                            <View style={styles.changeOverlay}>
+                              <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                              <Text style={styles.changeText}>Change</Text>
+                            </View>
+                          </>
+                        )
                       ) : (
                         <>
                           <View style={styles.uploadIcon}>
                             <MaterialCommunityIcons name="image-plus" size={24} color={Colors.accent} />
                           </View>
                           <Text style={styles.uploadTitle}>Upload {memberSection.label}</Text>
-                          <Text style={styles.uploadHint}>{FORMATS_DISCLAIMER}</Text>
+                          <Text style={styles.uploadHint}>{formatsDisclaimer}</Text>
                         </>
                       )}
                     </TouchableOpacity>
                     {(pendingFile || doc?.url) && (
                       <View style={styles.fileMetaRow}>
-                        <Text style={styles.formatsHint}>{FORMATS_DISCLAIMER}</Text>
+                        <Text style={styles.formatsHint}>{formatsDisclaimer}</Text>
                         {(() => {
                           const sizeLabel = pendingFile?.size
                             ? formatPickedFileSize(pendingFile.size)
@@ -492,6 +557,54 @@ export default function DocumentsScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal
+        visible={pickerSheetKey !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPickerSheetKey(null)}
+      >
+        <TouchableOpacity
+          style={styles.pickerOverlay}
+          activeOpacity={1}
+          onPress={() => setPickerSheetKey(null)}
+        >
+          <TouchableOpacity style={styles.pickerCard} activeOpacity={1} onPress={() => {}}>
+            <Text style={styles.pickerTitle}>Upload document</Text>
+            <TouchableOpacity
+              style={styles.pickerOption}
+              activeOpacity={0.7}
+              onPress={() => {
+                const key = pickerSheetKey;
+                setPickerSheetKey(null);
+                if (key) pickImage(key);
+              }}
+            >
+              <MaterialCommunityIcons name="image-outline" size={20} color={Colors.accent} />
+              <Text style={styles.pickerOptionText}>Choose Image</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pickerOption}
+              activeOpacity={0.7}
+              onPress={() => {
+                const key = pickerSheetKey;
+                setPickerSheetKey(null);
+                if (key) pickPdf(key);
+              }}
+            >
+              <MaterialCommunityIcons name="file-pdf-box" size={20} color={Colors.accent} />
+              <Text style={styles.pickerOptionText}>Upload PDF</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pickerCancelBtn}
+              activeOpacity={0.7}
+              onPress={() => setPickerSheetKey(null)}
+            >
+              <Text style={styles.pickerCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -652,6 +765,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   changeText: { color: "#fff", fontSize: 11, fontWeight: "600" },
+  pdfChip: { alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: Spacing.lg },
+  pdfChipText: { color: Colors.text, fontSize: 13, fontWeight: "600" },
   fileMetaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
   formatsHint: { color: Colors.textMuted, fontSize: 10 },
   fileSizeText: { color: Colors.textMuted, fontSize: 10, fontWeight: "600" },
@@ -674,4 +789,19 @@ const styles = StyleSheet.create({
   },
   submitText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
   disabled: { opacity: 0.55 },
+
+  pickerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  pickerCard: {
+    backgroundColor: Colors.card,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xl,
+  },
+  pickerTitle: { fontSize: 16, fontWeight: "800", color: Colors.text, paddingBottom: Spacing.md, marginBottom: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  pickerOption: { flexDirection: "row", alignItems: "center", gap: Spacing.md, paddingVertical: Spacing.md },
+  pickerOptionText: { fontSize: 15, fontWeight: "600", color: Colors.text },
+  pickerCancelBtn: { marginTop: Spacing.sm, paddingVertical: Spacing.md, alignItems: "center" },
+  pickerCancelText: { fontSize: 15, fontWeight: "600", color: Colors.textMuted },
 });

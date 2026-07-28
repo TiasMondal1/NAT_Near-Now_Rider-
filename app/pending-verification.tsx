@@ -36,6 +36,9 @@ const DOC_LABELS: Record<RequiredDocKey, string> = {
   driving_license_front: "Driving License (Front)",
   driving_license_back: "Driving License (Back)",
   vehicle_registration: "Vehicle Registration (RC)",
+  vehicle_photo_front: "Vehicle Photo (Front)",
+  vehicle_photo_side: "Vehicle Photo (Side)",
+  vehicle_photo_rear: "Vehicle Photo (Rear)",
 };
 
 export default function PendingVerificationScreen() {

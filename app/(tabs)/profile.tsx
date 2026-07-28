@@ -20,7 +20,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession, clearSession } from "../../session";
-import { uploadRiderImage, uploadVehicleImage } from "../../lib/storage";
+import { uploadRiderImage } from "../../lib/storage";
 
 type Profile = {
   user_id: string;
@@ -200,46 +200,6 @@ export default function ProfileScreen() {
       Alert.alert("Error", "Failed to upload image. Please try again.");
     } finally {
       setUploadingImage(false);
-    }
-  };
-
-  const [uploadingVehicleImage, setUploadingVehicleImage] = useState(false);
-  const handlePickVehicleImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to change your vehicle picture.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.7,
-    });
-
-    if (result.canceled || !result.assets?.[0]) return;
-
-    const session = await getSession();
-    if (!session?.user?.id) return;
-
-    setUploadingVehicleImage(true);
-    try {
-      const uploadRes = await uploadVehicleImage(session.user.id, result.assets[0].uri);
-      if (!uploadRes.ok) {
-        Alert.alert("Error", uploadRes.error || "Failed to upload image. Please try again.");
-        return;
-      }
-      await apiFetch(
-        "/delivery-partner/photo-urls",
-        { method: "PATCH", body: { vehicle_image_url: uploadRes.url } },
-        token
-      );
-      setProfile((prev) => (prev ? { ...prev, vehicle_image_url: uploadRes.url } : prev));
-    } catch {
-      Alert.alert("Error", "Failed to upload image. Please try again.");
-    } finally {
-      setUploadingVehicleImage(false);
     }
   };
 
@@ -452,38 +412,6 @@ export default function ProfileScreen() {
           </SectionCard>
 
           <SectionCard title="Vehicle Information" icon="truck-delivery-outline">
-            <View style={styles.vehiclePhotoRow}>
-              <TouchableOpacity
-                style={styles.vehiclePhotoThumb}
-                onPress={editing ? handlePickVehicleImage : undefined}
-                disabled={uploadingVehicleImage || !editing}
-                activeOpacity={editing ? 0.8 : 1}
-              >
-                {profile?.vehicle_image_url ? (
-                  <Image source={{ uri: profile.vehicle_image_url }} style={styles.vehiclePhotoImage} />
-                ) : (
-                  <MaterialCommunityIcons name="motorbike" size={24} color={Colors.textMuted} />
-                )}
-                {editing && (
-                  <View style={styles.vehiclePhotoOverlay}>
-                    {uploadingVehicleImage ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <MaterialCommunityIcons name="camera" size={16} color="#fff" />
-                    )}
-                  </View>
-                )}
-              </TouchableOpacity>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>Vehicle Photo</Text>
-                <Text style={styles.fieldValueMuted}>
-                  {editing
-                    ? profile?.vehicle_image_url ? "Tap to change" : "Tap to add a photo of your vehicle"
-                    : profile?.vehicle_image_url ? "Tap Edit to change" : "Not added"}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.fieldDivider} />
             <FieldRow
               label="Vehicle Type"
               displayValue={
@@ -497,7 +425,7 @@ export default function ProfileScreen() {
             <View style={styles.fieldDivider} />
             <FieldRow
               label="Vehicle Number"
-              displayValue={profile?.vehicle_number || "Not provided"}
+              displayValue={profile?.vehicle_number || "Set in Documents → Vehicle Registration"}
               readOnly
               icon="card-text-outline"
             />
@@ -759,29 +687,6 @@ const styles = StyleSheet.create({
   fieldValueMuted: { color: Colors.textSecondary, fontSize: 16 },
   fieldInput: { backgroundColor: Colors.surface, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.md, height: 42, color: Colors.text, fontSize: 15, borderWidth: 1, borderColor: Colors.accent + "40" },
   fieldDivider: { height: 1, backgroundColor: Colors.border },
-
-  vehiclePhotoRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md, paddingVertical: Spacing.sm },
-  vehiclePhotoThumb: {
-    width: 64,
-    height: 64,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    position: "relative",
-  },
-  vehiclePhotoImage: { width: 64, height: 64 },
-  vehiclePhotoOverlay: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 22,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
 
   quickActions: {
     backgroundColor: Colors.card,

@@ -5,6 +5,7 @@ export const REQUIRED_DOC_KEYS = [
   "pan_front", "pan_back",
   "driving_license_front", "driving_license_back",
   "vehicle_registration",
+  "vehicle_photo_front", "vehicle_photo_side", "vehicle_photo_rear",
 ] as const;
 export type RequiredDocKey = (typeof REQUIRED_DOC_KEYS)[number];
 
