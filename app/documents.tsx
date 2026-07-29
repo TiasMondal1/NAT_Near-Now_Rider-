@@ -232,12 +232,17 @@ export default function DocumentsScreen() {
 
   const saveOne = async (key: DocKey): Promise<VerificationDocument | null> => {
     if (!token) return null;
-    const number = numbers[key]?.trim();
+    // `autoCapitalize="characters"` on the input is only a keyboard hint —
+    // paste/autofill can still land lowercase characters in state — so the
+    // value that gets format-validated and the value that gets persisted
+    // must be the same normalized (uppercased) string, not two different
+    // ones computed separately.
+    const number = numbers[key]?.trim().toUpperCase();
     const file = pendingFiles[key];
     const current = serverDocs[key];
     if (!file && (number ?? "") === (current?.number ?? "")) return current; // nothing changed
 
-    if (number && !validateDocNumber(key, number.toUpperCase())) {
+    if (number && !validateDocNumber(key, number)) {
       Alert.alert("Invalid number", docNumberErrorMessage(key));
       return current;
     }

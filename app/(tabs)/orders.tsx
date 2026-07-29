@@ -96,6 +96,7 @@ export default function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [token, setToken] = useState("");
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -127,7 +128,10 @@ export default function OrdersScreen() {
           token
         );
         if (res.success) setOrders(res.orders);
-      } catch {}
+        setLoadError(false);
+      } catch {
+        setLoadError(true);
+      }
 
       setLoading(false);
       setRefreshing(false);
@@ -207,23 +211,36 @@ export default function OrdersScreen() {
             />
           }
           ListEmptyComponent={
-            <View style={styles.centered}>
-              <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name={tab === "active" ? "truck-fast-outline" : "clipboard-check-outline"}
-                  size={40}
-                  color={Colors.accent}
-                />
+            loadError ? (
+              <View style={styles.centered}>
+                <View style={[styles.emptyIconWrap, { backgroundColor: Colors.warningLight }]}>
+                  <MaterialCommunityIcons name="wifi-alert" size={40} color={Colors.warning} />
+                </View>
+                <Text style={styles.emptyTitle}>Couldn&apos;t load orders</Text>
+                <Text style={styles.emptySub}>Check your connection and try again.</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={() => fetchOrders(true)}>
+                  <Text style={styles.retryBtnText}>Try Again</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.emptyTitle}>
-                {tab === "active" ? "No active orders" : "No past orders"}
-              </Text>
-              <Text style={styles.emptySub}>
-                {tab === "active"
-                  ? "Go online to start receiving orders"
-                  : "Your completed deliveries will appear here"}
-              </Text>
-            </View>
+            ) : (
+              <View style={styles.centered}>
+                <View style={styles.emptyIconWrap}>
+                  <MaterialCommunityIcons
+                    name={tab === "active" ? "truck-fast-outline" : "clipboard-check-outline"}
+                    size={40}
+                    color={Colors.accent}
+                  />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {tab === "active" ? "No active orders" : "No past orders"}
+                </Text>
+                <Text style={styles.emptySub}>
+                  {tab === "active"
+                    ? "Go online to start receiving orders"
+                    : "Your completed deliveries will appear here"}
+                </Text>
+              </View>
+            )
           }
         />
       )}
@@ -420,4 +437,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: Spacing.xl,
   },
+  retryBtn: {
+    marginTop: Spacing.md,
+    backgroundColor: Colors.warning,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "600" },
 });

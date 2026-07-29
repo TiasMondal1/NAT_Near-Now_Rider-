@@ -84,13 +84,18 @@ export default function NotificationPreferencesScreen() {
   const toggle = useCallback(
     (key: keyof Preferences) => {
       if (!token) return;
-      setPrefs((prev) => {
-        const next = { ...prev, [key]: !prev[key] };
-        apiFetch("/delivery-partner/notifications/preferences", { method: "POST", body: next }, token).catch(() => {});
-        return next;
+      // Snapshot before flipping so a failed save can revert the switch
+      // instead of silently leaving it showing a preference that was never
+      // actually persisted server-side.
+      const previous = prefs;
+      const next = { ...prefs, [key]: !prefs[key] };
+      setPrefs(next);
+      apiFetch("/delivery-partner/notifications/preferences", { method: "POST", body: next }, token).catch(() => {
+        setPrefs(previous);
+        Alert.alert("Couldn't save preference", "Please check your connection and try again.");
       });
     },
-    [token]
+    [token, prefs]
   );
 
   const requestPermission = useCallback(async () => {

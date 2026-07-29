@@ -332,6 +332,18 @@ export default function DeliveryScreen() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [token, loadSequence]);
 
+  // Once the order is delivered, the 10s pickup-sequence poll and the
+  // foreground GPS watcher above have nothing left to do — a rider lingering
+  // on the "Order Delivered!" screen would otherwise keep polling and
+  // streaming location indefinitely for no functional reason.
+  const isDeliveryComplete = order?.status === "order_delivered" || order?.status === "completed";
+  useEffect(() => {
+    if (!isDeliveryComplete) return;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    locationSubRef.current?.remove();
+    locationSubRef.current = null;
+  }, [isDeliveryComplete]);
+
   const markDelivered = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert("Confirm Delivery", "Mark this order as delivered to the customer?", [
@@ -397,7 +409,7 @@ export default function DeliveryScreen() {
 
   const nextIdx = stops.findIndex((s) => !s.picked_up);
   const doneCount = stops.filter((s) => s.picked_up).length;
-  const isCompleted = order.status === "order_delivered" || order.status === "completed";
+  const isCompleted = isDeliveryComplete;
 
   return (
     <SafeAreaView style={styles.safe}>

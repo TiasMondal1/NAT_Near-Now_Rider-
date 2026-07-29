@@ -38,6 +38,7 @@ export default function EarningsScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [token, setToken] = useState("");
   const [period, setPeriod] = useState<Period>("today");
 
@@ -67,7 +68,10 @@ export default function EarningsScreen() {
         token
       );
       if (res.success) setOrders(res.orders);
-    } catch {}
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
     setLoading(false);
     setRefreshing(false);
   }, [token]);
@@ -226,21 +230,34 @@ export default function EarningsScreen() {
           </Animated.View>
         )}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name="cash-remove"
-                size={40}
-                color={Colors.accent}
-              />
+          loadError ? (
+            <View style={styles.emptyContainer}>
+              <View style={[styles.emptyIconWrap, { backgroundColor: Colors.warningLight }]}>
+                <MaterialCommunityIcons name="wifi-alert" size={40} color={Colors.warning} />
+              </View>
+              <Text style={styles.emptyText}>Couldn&apos;t load earnings</Text>
+              <Text style={styles.emptySub}>Check your connection and try again.</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={() => fetchCompleted()}>
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.emptyText}>
-              {period === "today" ? "No earnings today" : period === "week" ? "No earnings this week" : "No earnings yet"}
-            </Text>
-            <Text style={styles.emptySub}>
-              Complete deliveries to start earning
-            </Text>
-          </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconWrap}>
+                <MaterialCommunityIcons
+                  name="cash-remove"
+                  size={40}
+                  color={Colors.accent}
+                />
+              </View>
+              <Text style={styles.emptyText}>
+                {period === "today" ? "No earnings today" : period === "week" ? "No earnings this week" : "No earnings yet"}
+              </Text>
+              <Text style={styles.emptySub}>
+                Complete deliveries to start earning
+              </Text>
+            </View>
+          )
         }
       />
       </View>
@@ -480,4 +497,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
+  retryBtn: {
+    marginTop: Spacing.md,
+    backgroundColor: Colors.warning,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "600" },
 });

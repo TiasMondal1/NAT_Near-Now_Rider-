@@ -7,6 +7,7 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -72,17 +73,32 @@ export default function NotificationsScreen() {
 
   const markAllRead = useCallback(async () => {
     if (!token) return;
+    // Snapshot before the optimistic update so a failed PUT can be reverted
+    // instead of leaving this screen permanently out of sync with the real
+    // server state (e.g. Home's bell badge, which always refetches fresh).
+    const previous = notifications;
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    apiFetch("/delivery-partner/notifications/read-all", { method: "PUT" }, token).catch(() => {});
-  }, [token]);
+    try {
+      await apiFetch("/delivery-partner/notifications/read-all", { method: "PUT" }, token);
+    } catch {
+      setNotifications(previous);
+      Alert.alert("Couldn't mark all as read", "Please check your connection and try again.");
+    }
+  }, [token, notifications]);
 
   const markOneRead = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (!token) return;
+      const previous = notifications;
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
-      apiFetch(`/delivery-partner/notifications/${id}/read`, { method: "PUT" }, token).catch(() => {});
+      try {
+        await apiFetch(`/delivery-partner/notifications/${id}/read`, { method: "PUT" }, token);
+      } catch {
+        setNotifications(previous);
+        Alert.alert("Couldn't mark as read", "Please check your connection and try again.");
+      }
     },
-    [token]
+    [token, notifications]
   );
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
