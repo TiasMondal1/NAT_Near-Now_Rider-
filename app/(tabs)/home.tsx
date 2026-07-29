@@ -39,6 +39,12 @@ const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 const IGNORED_OFFERS_KEY = "rider_ignored_offer_ids";
 const LOCATION_PERMISSION_EXPLAINED_KEY = "rider_location_permission_explained";
 
+type OfferStoreItem = {
+  product_name: string;
+  quantity: number;
+  unit: string | null;
+};
+
 type OfferStore = {
   store_id: string;
   sequence_number: number;
@@ -46,6 +52,9 @@ type OfferStore = {
   address: string;
   latitude: number;
   longitude: number;
+  phone?: string | null;
+  item_count?: number;
+  items?: OfferStoreItem[];
 };
 
 type Offer = {
@@ -56,6 +65,8 @@ type Offer = {
   delivery_address: string;
   customer_lat: number;
   customer_lng: number;
+  customer_name?: string | null;
+  customer_phone?: string | null;
   placed_at: string;
   store_count: number;
   stores: OfferStore[];
@@ -889,14 +900,16 @@ export default function HomeScreen() {
             <>
               {visibleOffers.map((offer) => {
                 const firstStore = offer.stores[0];
+                const lastStore = offer.stores[offer.stores.length - 1];
                 const d2store =
                   driverPos && firstStore
                     ? fmtDist(haversineKm(driverPos.lat, driverPos.lng, firstStore.latitude, firstStore.longitude))
                     : null;
                 const d2cust =
-                  firstStore
-                    ? fmtDist(haversineKm(firstStore.latitude, firstStore.longitude, offer.customer_lat, offer.customer_lng))
+                  lastStore
+                    ? fmtDist(haversineKm(lastStore.latitude, lastStore.longitude, offer.customer_lat, offer.customer_lng))
                     : null;
+                const totalItems = offer.stores.reduce((sum, s) => sum + (s.item_count ?? s.items?.length ?? 0), 0);
 
                 return (
                   <View key={offer.offer_id} style={styles.offerCard}>
@@ -907,6 +920,13 @@ export default function HomeScreen() {
                           {offer.store_count} store{offer.store_count !== 1 ? "s" : ""}
                         </Text>
                       </View>
+                      {totalItems > 0 && (
+                        <View style={styles.offerStoreBadge}>
+                          <Text style={styles.offerStoreBadgeText}>
+                            {totalItems} item{totalItems !== 1 ? "s" : ""}
+                          </Text>
+                        </View>
+                      )}
                       <Text style={styles.offerAmount}>₹{offer.total_amount}</Text>
                     </View>
 
@@ -935,6 +955,7 @@ export default function HomeScreen() {
                         const dist = driverPos
                           ? fmtDist(haversineKm(driverPos.lat, driverPos.lng, s.latitude, s.longitude))
                           : null;
+                        const itemCount = s.item_count ?? s.items?.length ?? 0;
                         return (
                           <View key={s.store_id} style={styles.offerStoreRow}>
                             <View style={styles.offerStoreSeq}>
@@ -943,6 +964,23 @@ export default function HomeScreen() {
                             <View style={{ flex: 1 }}>
                               <Text style={styles.offerStoreName}>{s.name || "Store"}</Text>
                               <Text style={styles.offerStoreAddr} numberOfLines={1}>{s.address}</Text>
+                              <View style={styles.offerStoreMetaRow}>
+                                {itemCount > 0 && (
+                                  <Text style={styles.offerStoreMeta}>
+                                    {itemCount} item{itemCount !== 1 ? "s" : ""} to pick
+                                  </Text>
+                                )}
+                                {s.phone && (
+                                  <TouchableOpacity
+                                    style={styles.offerStoreCallBtn}
+                                    onPress={() => Linking.openURL(`tel:${s.phone}`)}
+                                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  >
+                                    <MaterialCommunityIcons name="phone" size={11} color={Colors.accent} />
+                                    <Text style={styles.offerStoreCallText}>{s.phone}</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
                             </View>
                             {dist && (
                               <View style={styles.offerStoreDistBadge}>
@@ -957,7 +995,26 @@ export default function HomeScreen() {
 
                     <View style={styles.offerDropRow}>
                       <MaterialCommunityIcons name="map-marker" size={14} color={Colors.danger} />
-                      <Text style={styles.offerDropAddr} numberOfLines={2}>{offer.delivery_address}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.offerDropAddr} numberOfLines={2}>{offer.delivery_address}</Text>
+                        {(offer.customer_name || offer.customer_phone) && (
+                          <View style={styles.offerCustomerRow}>
+                            {offer.customer_name && (
+                              <Text style={styles.offerCustomerName}>{offer.customer_name}</Text>
+                            )}
+                            {offer.customer_phone && (
+                              <TouchableOpacity
+                                style={styles.offerStoreCallBtn}
+                                onPress={() => Linking.openURL(`tel:${offer.customer_phone}`)}
+                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                              >
+                                <MaterialCommunityIcons name="phone" size={11} color={Colors.accent} />
+                                <Text style={styles.offerStoreCallText}>{offer.customer_phone}</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        )}
+                      </View>
                     </View>
 
                     <View style={styles.offerActionRow}>
@@ -1197,6 +1254,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   offerStoreDistText: { color: Colors.accent, fontSize: 11, fontWeight: "700" },
+  offerStoreMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 3 },
+  offerStoreMeta: { color: Colors.textMuted, fontSize: 11 },
+  offerStoreCallBtn: { flexDirection: "row", alignItems: "center", gap: 3 },
+  offerStoreCallText: { color: Colors.accent, fontSize: 11, fontWeight: "600" },
   offerDropRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1206,6 +1267,8 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
   },
   offerDropAddr: { color: Colors.textSecondary, fontSize: 13, flex: 1 },
+  offerCustomerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 4 },
+  offerCustomerName: { color: Colors.text, fontSize: 12, fontWeight: "600" },
   offerActionRow: {
     flexDirection: "row",
     gap: 10,
