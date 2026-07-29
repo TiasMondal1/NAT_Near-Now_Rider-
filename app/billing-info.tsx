@@ -80,8 +80,21 @@ export default function BillingInfoScreen() {
         Alert.alert("Upload failed", res.error);
         return;
       }
-      await apiFetch("/delivery-partner/photo-urls", { method: "PATCH", body: { profile_image_url: res.url } }, token);
-      setProfileImageUrl(res.url);
+      // The file is already in storage at this point — if this save fails,
+      // it's orphaned there with nothing pointing at it. Previously
+      // uncaught: any failure here (network blip, expired session, 500)
+      // threw silently past the button's onPress with no alert at all, and
+      // profileImageUrl was never set, so the avatar just reverted to the
+      // placeholder with no indication anything had gone wrong.
+      try {
+        await apiFetch("/delivery-partner/photo-urls", { method: "PATCH", body: { profile_image_url: res.url } }, token);
+        setProfileImageUrl(res.url);
+      } catch {
+        Alert.alert(
+          "Save failed",
+          "Your photo uploaded but we couldn't save it to your profile. Please try again."
+        );
+      }
     } finally {
       setUploadingImage(false);
     }
