@@ -46,27 +46,30 @@ function toStoredSupabaseSession(supabaseSession?: { access_token: string; refre
 }
 
 async function hasRegisteredRiderProfile(token: string): Promise<boolean> {
-  try {
-    const profileRes = await apiFetch<{
-      success?: boolean;
-      profile?: {
-        user_id?: string;
-        name?: string;
-        status?: string | null;
-        verification_document?: string | null;
-        address?: string | null;
-      };
-    }>("/delivery-partner/profile", {}, token);
+  const profileRes = await apiFetch<{
+    success?: boolean;
+    profile?: {
+      user_id?: string;
+      name?: string;
+      status?: string | null;
+      verification_document?: string | null;
+      address?: string | null;
+    };
+  }>("/delivery-partner/profile", {}, token);
 
-    const profile = profileRes?.profile;
-    if (!profileRes?.success || !profile) return false;
+  const profile = profileRes?.profile;
+  if (!profileRes?.success || !profile) return false;
 
-    // Registration and document upload are separate steps. A rider profile
-    // created by /signup/complete counts as registered even before KYC upload.
-    return Boolean(profile.user_id && profile.name);
-  } catch {
-    return false;
-  }
+  // Registration and document upload are separate steps. A rider profile
+  // created by /signup/complete counts as registered even before KYC upload.
+  // Only `user_id` is checked (not `name`, which comes from a separate
+  // app_users join in getProfile) — `user_id` is always populated directly
+  // from the authenticated session's own riderId regardless of whether that
+  // join succeeds, so it's the reliable signal here. Found 2026-07-31: a
+  // production issue where that app_users join was silently failing made
+  // `name` always undefined, so requiring it here permanently rejected every
+  // real, registered rider as "not registered" — see getProfile's own fix.
+  return Boolean(profile.user_id);
 }
 
 export default function OTPScreen() {
