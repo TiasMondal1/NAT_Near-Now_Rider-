@@ -42,14 +42,16 @@ export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchNotifications = useCallback(async (authToken: string, isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
       const data = await apiFetch<AppNotification[]>("/delivery-partner/notifications", {}, authToken);
       setNotifications(Array.isArray(data) ? data : []);
+      setLoadError(false);
     } catch {
-      setNotifications([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -101,6 +103,19 @@ export default function NotificationsScreen() {
     [token, notifications]
   );
 
+  const openNotification = useCallback(
+    (item: AppNotification) => {
+      markOneRead(item.id);
+      const orderId = item.data?.orderId;
+      if (item.type === "new_order" && typeof orderId === "string") {
+        router.push({ pathname: "/delivery/[orderId]", params: { orderId } });
+      } else if (item.type === "new_order_offer") {
+        router.push("/(tabs)/home");
+      }
+    },
+    [markOneRead, router]
+  );
+
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   return (
@@ -133,17 +148,31 @@ export default function NotificationsScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent} />
           }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <MaterialCommunityIcons name="bell-outline" size={48} color={Colors.textMuted} />
-              <Text style={styles.emptyTitle}>No notifications yet</Text>
-              <Text style={styles.emptyText}>New order alerts will appear here</Text>
-            </View>
+            loadError ? (
+              <View style={styles.empty}>
+                <MaterialCommunityIcons name="wifi-alert" size={48} color={Colors.warning} />
+                <Text style={styles.emptyTitle}>Couldn&apos;t load notifications</Text>
+                <Text style={styles.emptyText}>Check your connection and try again.</Text>
+                <TouchableOpacity
+                  style={styles.retryBtn}
+                  onPress={() => token && fetchNotifications(token)}
+                >
+                  <Text style={styles.retryBtnText}>Try Again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.empty}>
+                <MaterialCommunityIcons name="bell-outline" size={48} color={Colors.textMuted} />
+                <Text style={styles.emptyTitle}>No notifications yet</Text>
+                <Text style={styles.emptyText}>New order alerts will appear here</Text>
+              </View>
+            )
           }
           renderItem={({ item }) => (
             <TouchableOpacity
               style={[styles.card, !item.is_read && styles.cardUnread]}
               activeOpacity={0.7}
-              onPress={() => markOneRead(item.id)}
+              onPress={() => openNotification(item)}
             >
               <View style={styles.iconWrap}>
                 <MaterialCommunityIcons name="truck-fast-outline" size={18} color={Colors.accent} />
@@ -211,4 +240,12 @@ const styles = StyleSheet.create({
   empty: { marginTop: 80, alignItems: "center", gap: 10, padding: 32 },
   emptyTitle: { fontSize: 16, fontWeight: "700", color: Colors.text },
   emptyText: { fontSize: 13, color: Colors.textMuted, textAlign: "center" },
+  retryBtn: {
+    marginTop: Spacing.md,
+    backgroundColor: Colors.warning,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "600" },
 });

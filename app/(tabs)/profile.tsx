@@ -431,6 +431,7 @@ export default function ProfileScreen() {
               displayValue={profile?.vehicle_number || "Set in Documents → Vehicle Registration"}
               readOnly
               icon="card-text-outline"
+              onPress={profile?.vehicle_number ? undefined : () => router.push("/documents")}
             />
             <View style={styles.fieldDivider} />
             <View style={styles.fieldRowView}>
@@ -532,15 +533,15 @@ function SectionCard({ title, icon, children }: { title: string; icon: string; c
   );
 }
 
-function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly, keyboardType, autoCapitalize, multiline, placeholder, icon }: {
-  label: string; editing?: boolean; value?: string; displayValue: string; onChangeText?: (t: string) => void; readOnly?: boolean; keyboardType?: any; autoCapitalize?: any; multiline?: boolean; placeholder?: string; icon?: string;
+function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly, keyboardType, autoCapitalize, multiline, placeholder, icon, onPress }: {
+  label: string; editing?: boolean; value?: string; displayValue: string; onChangeText?: (t: string) => void; readOnly?: boolean; keyboardType?: any; autoCapitalize?: any; multiline?: boolean; placeholder?: string; icon?: string; onPress?: () => void;
 }) {
-  return (
+  const content = (
     <View style={{ paddingVertical: Spacing.sm }}>
       <View style={styles.fieldLabelRow}>
         {icon && <MaterialCommunityIcons name={icon as any} size={14} color={Colors.accent} />}
         <Text style={styles.fieldLabel}>{label}</Text>
-        {readOnly && (
+        {readOnly && !onPress && (
           <View style={styles.readOnlyBadge}>
             <MaterialCommunityIcons name="lock" size={10} color={Colors.textMuted} />
           </View>
@@ -558,9 +559,22 @@ function FieldRow({ label, editing, value, displayValue, onChangeText, readOnly,
           placeholderTextColor={Colors.textMuted}
         />
       ) : (
-        <Text style={readOnly ? styles.fieldValueMuted : styles.fieldValue}>{displayValue}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Text style={[readOnly ? styles.fieldValueMuted : styles.fieldValue, onPress && { color: Colors.accent }]}>
+            {displayValue}
+          </Text>
+          {onPress && <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.accent} />}
+        </View>
       )}
     </View>
+  );
+
+  return onPress ? (
+    <TouchableOpacity activeOpacity={0.6} onPress={onPress}>
+      {content}
+    </TouchableOpacity>
+  ) : (
+    content
   );
 }
 
