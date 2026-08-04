@@ -65,6 +65,7 @@ type ActiveOrder = {
   receiver_name?: string | null;
   receiver_phone?: string | null;
   receiver_address?: string | null;
+  delivery_otp_verified?: boolean;
 };
 
 function PickupStopCard({
@@ -285,6 +286,10 @@ export default function DeliveryScreen() {
         );
         setOrder(res.order);
         setStops(res.stops);
+        // Server-persisted verification survives an app relaunch, unlike the
+        // local-only otpVerified state — hydrate from it once true so a
+        // rider who already verified isn't asked to repeat the OTP.
+        if (res.order.delivery_otp_verified) setOtpVerified(true);
         if (!silent) {
           Animated.parallel([
             Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
