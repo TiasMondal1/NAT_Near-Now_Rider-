@@ -270,6 +270,8 @@ export default function DeliveryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [driverLat, setDriverLat] = useState<number | null>(null);
   const [driverLng, setDriverLng] = useState<number | null>(null);
+  const [pollStale, setPollStale] = useState(false);
+  const consecutivePollFailuresRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationSubRef = useRef<Location.LocationSubscription | null>(null);
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -290,6 +292,8 @@ export default function DeliveryScreen() {
         // local-only otpVerified state — hydrate from it once true so a
         // rider who already verified isn't asked to repeat the OTP.
         if (res.order.delivery_otp_verified) setOtpVerified(true);
+        consecutivePollFailuresRef.current = 0;
+        setPollStale(false);
         if (!silent) {
           Animated.parallel([
             Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
@@ -297,7 +301,16 @@ export default function DeliveryScreen() {
           ]).start();
         }
       } catch {
-        if (!silent) Alert.alert("Error", "Failed to load order.");
+        if (!silent) {
+          Alert.alert("Error", "Failed to load order.");
+        } else {
+          // Background polls fail silently by design, but 2+ in a row means the
+          // pickup-sequence/OTP state on screen could be stale — surface a
+          // banner so a rider mid-delivery on a flaky connection doesn't trust
+          // a stopped-updating screen.
+          consecutivePollFailuresRef.current += 1;
+          if (consecutivePollFailuresRef.current >= 2) setPollStale(true);
+        }
       }
       setLoading(false);
       setRefreshing(false);
@@ -433,6 +446,13 @@ export default function DeliveryScreen() {
           <Text style={styles.amountText}>₹{order.total_amount}</Text>
         </View>
       </View>
+
+      {pollStale && !isCompleted && (
+        <View style={styles.staleBanner}>
+          <MaterialCommunityIcons name="wifi-alert" size={14} color={Colors.warning} />
+          <Text style={styles.staleBannerText}>Connection issue — this screen may be showing outdated info</Text>
+        </View>
+      )}
 
       <Animated.View style={{ flex: 1, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <ScrollView
@@ -632,6 +652,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.accent + "40",
   },
   amountText: { color: Colors.accent, fontSize: 14, fontWeight: "700" },
+
+  staleBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.warningLight,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+  },
+  staleBannerText: { color: Colors.warning, fontSize: 12, fontWeight: "600", flex: 1 },
 
   scroll: { flex: 1 },
   scrollContent: { padding: Spacing.lg, gap: Spacing.md, paddingBottom: 140 },

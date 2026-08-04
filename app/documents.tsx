@@ -127,6 +127,11 @@ export default function DocumentsScreen() {
   const [pendingFiles, setPendingFiles] = useState<Partial<Record<DocKey, PickedDocFile>>>({});
   const [savingKey, setSavingKey] = useState<DocKey | null>(null);
   const [saving, setSaving] = useState(false);
+  // Distinct from `doc.status === "rejected"` (an admin review outcome) —
+  // this tracks a failed *save* attempt during handleSaveAll's batch, so a
+  // card that failed to upload keeps a visible marker after its one-shot
+  // Alert is dismissed, instead of looking identical to an untouched card.
+  const [failedKeys, setFailedKeys] = useState<Set<DocKey>>(new Set());
   const suspendedRef = useRef(false);
 
   useEffect(() => {
@@ -174,6 +179,12 @@ export default function DocumentsScreen() {
         size: asset.fileSize,
       },
     }));
+    setFailedKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   };
 
   const pickImage = async (key: DocKey) => {
@@ -221,6 +232,12 @@ export default function DocumentsScreen() {
       ...prev,
       [key]: { uri: asset.uri, name: asset.name || "document.pdf", type: "application/pdf", size: asset.size },
     }));
+    setFailedKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   };
 
   // Every document, including the 3 vehicle photos, offers a choice between
@@ -254,9 +271,16 @@ export default function DocumentsScreen() {
         file,
       });
       if (!res.ok) {
+        setFailedKeys((prev) => new Set(prev).add(key));
         Alert.alert("Upload failed", res.error);
         return current;
       }
+      setFailedKeys((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
       const mergedDoc = { ...res.document, url: res.document.url ?? current?.url ?? file?.uri ?? null };
       setServerDocs((prev) => ({ ...prev, [key]: mergedDoc }));
       setPendingFiles((prev) => {
@@ -266,6 +290,9 @@ export default function DocumentsScreen() {
       });
       if (res.riderSuspended) suspendedRef.current = true;
       return mergedDoc;
+    } catch (e) {
+      setFailedKeys((prev) => new Set(prev).add(key));
+      throw e;
     } finally {
       setSavingKey(null);
     }
@@ -489,8 +516,19 @@ export default function DocumentsScreen() {
                       </View>
                     ) : null}
 
+                    {failedKeys.has(memberKey) && (
+                      <View style={styles.rejectionBanner}>
+                        <MaterialCommunityIcons name="alert-circle" size={14} color={Colors.danger} />
+                        <Text style={styles.rejectionText}>Failed to save — tap below to retry</Text>
+                      </View>
+                    )}
+
                     <TouchableOpacity
-                      style={[styles.uploadArea, (pendingFile || doc?.url) && styles.uploadAreaFilled]}
+                      style={[
+                        styles.uploadArea,
+                        (pendingFile || doc?.url) && styles.uploadAreaFilled,
+                        failedKeys.has(memberKey) && styles.uploadAreaFailed,
+                      ]}
                       activeOpacity={0.8}
                       onPress={() => handleUploadPress(memberKey)}
                       disabled={isSavingThis}
@@ -741,6 +779,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   uploadAreaFilled: { borderStyle: "solid", borderColor: Colors.accent + "50" },
+  uploadAreaFailed: { borderStyle: "solid", borderColor: Colors.danger + "60" },
   uploadIcon: {
     width: 44,
     height: 44,

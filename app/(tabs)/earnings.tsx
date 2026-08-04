@@ -104,6 +104,13 @@ export default function EarningsScreen() {
   const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
   const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
 
+  // Orders with no payout row (pre-payout-fix deliveries) contribute ₹0 to
+  // filteredEarnings but shouldn't count toward the average's divisor — doing
+  // so silently drags "Avg ₹/delivery" down and could look like underpayment
+  // for deliveries that simply predate payout tracking.
+  const payoutKnownOrders = filteredOrders.filter((o) => o.payout_amount != null);
+  const legacyOrderCount = filteredOrders.length - payoutKnownOrders.length;
+
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString("en-IN", {
@@ -127,6 +134,13 @@ export default function EarningsScreen() {
       <View style={styles.responsiveWrap}>
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <Text style={styles.header}>Earnings</Text>
+
+        {loadError && orders.length > 0 && (
+          <View style={styles.staleBanner}>
+            <MaterialCommunityIcons name="wifi-alert" size={14} color={Colors.warning} />
+            <Text style={styles.staleBannerText}>Connection issue — figures may be outdated</Text>
+          </View>
+        )}
 
         <View style={styles.periodRow}>
           {(["today", "week", "all"] as const).map((p) => (
@@ -160,15 +174,20 @@ export default function EarningsScreen() {
               <MaterialCommunityIcons name="package-variant-closed" size={16} color={Colors.textMuted} />
               <Text style={styles.summaryMetaText}>{filteredOrders.length} deliveries</Text>
             </View>
-            {filteredOrders.length > 0 && (
+            {payoutKnownOrders.length > 0 && (
               <View style={styles.summaryMeta}>
                 <MaterialCommunityIcons name="trending-up" size={16} color={Colors.success} />
                 <Text style={[styles.summaryMetaText, { color: Colors.success }]}>
-                  Avg {"\u20B9"}{(filteredEarnings / filteredOrders.length).toFixed(0)}/delivery
+                  Avg {"\u20B9"}{(filteredEarnings / payoutKnownOrders.length).toFixed(0)}/delivery
                 </Text>
               </View>
             )}
           </View>
+          {legacyOrderCount > 0 && (
+            <Text style={styles.legacyNote}>
+              {legacyOrderCount} {legacyOrderCount === 1 ? "delivery" : "deliveries"} shown as {"\u20B9"}0 \u2014 payout data unavailable for {legacyOrderCount === 1 ? "it" : "them"}, excluded from the average.
+            </Text>
+          )}
         </View>
 
         <View style={styles.quickStatsRow}>
@@ -285,6 +304,18 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: Spacing.sm,
   },
+  staleBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.warningLight,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.md,
+  },
+  staleBannerText: { color: Colors.warning, fontSize: 12, fontWeight: "600", flex: 1 },
 
   periodRow: {
     flexDirection: "row",
@@ -377,6 +408,12 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 13,
     fontWeight: "500",
+  },
+  legacyNote: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: Spacing.sm,
+    lineHeight: 15,
   },
 
   quickStatsRow: {

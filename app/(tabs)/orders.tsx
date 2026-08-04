@@ -194,6 +194,13 @@ export default function OrdersScreen() {
         </View>
       </Animated.View>
 
+      {loadError && orders.length > 0 && (
+        <View style={styles.staleBanner}>
+          <MaterialCommunityIcons name="wifi-alert" size={14} color={Colors.warning} />
+          <Text style={styles.staleBannerText}>Connection issue — this list may be outdated</Text>
+        </View>
+      )}
+
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={Colors.accent} size="large" />
@@ -267,6 +274,15 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: Spacing.sm,
   },
+  staleBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.warningLight,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 8,
+  },
+  staleBannerText: { color: Colors.warning, fontSize: 12, fontWeight: "600", flex: 1 },
   header: {
     color: Colors.text,
     fontSize: 28,
