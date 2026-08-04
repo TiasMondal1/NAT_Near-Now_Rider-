@@ -122,8 +122,12 @@ export default function OrdersScreen() {
       if (showLoader) setLoading(true);
 
       try {
-        const res = await apiFetch<{ success: boolean; orders: Order[] }>(
-          `/delivery-partner/orders?status=${tab}`,
+        // Capped — this list has no client-side aggregate depending on
+        // completeness (unlike earnings.tsx's lifetime total, left
+        // unbounded), so a page cap is safe and bounds payload size for a
+        // long-tenured rider's order history.
+        const res = await apiFetch<{ success: boolean; orders: Order[]; has_more?: boolean }>(
+          `/delivery-partner/orders?status=${tab}&limit=50`,
           {},
           token
         );
