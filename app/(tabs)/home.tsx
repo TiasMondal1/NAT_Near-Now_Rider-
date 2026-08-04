@@ -304,53 +304,88 @@ export default function HomeScreen() {
     };
   }, [requestLocationPermissions]);
 
+  // Mirrors driverStatus for the realtime handler below, which is set up
+  // once per token (not re-subscribed on every status change) and so needs
+  // a way to read the *current* status without closing over a stale one.
+  const driverStatusRef = useRef(driverStatus);
+  useEffect(() => {
+    driverStatusRef.current = driverStatus;
+  }, [driverStatus]);
+
+  const applyActiveStatus = useCallback(() => {
+    setDriverStatus("active");
+    setVerifiedBanner(true);
+    Animated.sequence([
+      Animated.timing(verifiedBannerAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+      Animated.delay(4000),
+      Animated.timing(verifiedBannerAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
+    ]).start(() => setVerifiedBanner(false));
+  }, [verifiedBannerAnim]);
+
+  // Applies a fresh status/is_approved pair from either the poll below or
+  // the realtime subscription. Keeping is_approved live *after* the rider
+  // goes active (not just during the pre-active poll) closes a gap where
+  // canGoOnline could stay stale-true if an admin ever revoked approval on
+  // an already-active rider — no known mutation path does that today, but
+  // this makes the screen correct if one ever does, at effectively zero
+  // ongoing cost since it rides the realtime subscription that's already
+  // open rather than adding new polling.
+  const applyProfileUpdate = useCallback(
+    (newStatus: string, newIsApproved: boolean | undefined) => {
+      setIsApproved(newIsApproved !== false);
+      if (newStatus === "active" && driverStatusRef.current !== "active") {
+        applyActiveStatus();
+      } else if (newStatus && newStatus !== driverStatusRef.current) {
+        setDriverStatus(newStatus);
+      }
+    },
+    [applyActiveStatus]
+  );
+
   // Poll while account is anything other than active — covers both
   // pending_verification -> active (new signup approved) and
   // suspended/offboarded -> active (reinstated by admin). Previously only
   // ran for pending_verification, so a suspended rider reinstated while the
   // app stayed open never found out short of force-quitting and relaunching.
+  // Stops once active — the realtime subscription in the next effect stays
+  // open and covers status/approval changes from then on at no polling cost.
   useEffect(() => {
     if (!driverStatus || driverStatus === "active" || !token) {
       if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
-      statusRealtimeChannelRef.current?.unsubscribe();
-      statusRealtimeChannelRef.current = null;
       return;
     }
-
-    const applyActiveStatus = () => {
-      setDriverStatus("active");
-      setVerifiedBanner(true);
-      Animated.sequence([
-        Animated.timing(verifiedBannerAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
-        Animated.delay(4000),
-        Animated.timing(verifiedBannerAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
-      ]).start(() => setVerifiedBanner(false));
-    };
 
     const checkVerification = async () => {
       try {
         const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string; is_approved?: boolean } }>(
           "/delivery-partner/profile", {}, token
         );
-        const newStatus = profileRes.profile.status ?? "";
-        setIsApproved(profileRes.profile.is_approved !== false);
-        if (newStatus === "active") applyActiveStatus();
+        applyProfileUpdate(profileRes.profile.status ?? "", profileRes.profile.is_approved);
       } catch {}
     };
 
-    // Fallback poll — the Realtime subscription below delivers near-instantly
-    // when it's connected; this covers the gap for a session that never got
-    // a Supabase Auth bridge session (mint failed at login) or while the
-    // subscription itself is still (re)connecting.
     statusPollRef.current = setInterval(checkVerification, 10000);
+    return () => {
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+    };
+  }, [driverStatus, token, applyProfileUpdate]);
 
-    // Realtime: near-instant notice the moment an admin flips this rider's
-    // status. Needs a real Supabase Auth session, since Realtime's RLS check
-    // only ever evaluates auth.uid() — this app's own custom phone-OTP login
-    // never populates that, so the backend mints a narrowly-scoped bridge
-    // session at login solely for this (see riderAuthBridge.service.ts /
-    // partner_own_record RLS policy). If that mint failed, session.supabaseSession
-    // is simply absent and this is skipped — the poll above still covers it.
+  // Realtime: near-instant notice the moment an admin changes this rider's
+  // status or approval, whether or not they're currently active — subscribed
+  // once per token (not torn down/rebuilt on every status change, unlike the
+  // poll above) since it's push-based and cheap to leave open indefinitely.
+  // Needs a real Supabase Auth session, since Realtime's RLS check only ever
+  // evaluates auth.uid() — this app's own custom phone-OTP login never
+  // populates that, so the backend mints a narrowly-scoped bridge session at
+  // login solely for this (see riderAuthBridge.service.ts /
+  // partner_own_record RLS policy). If that mint failed, session.supabaseSession
+  // is simply absent and this is skipped — the poll above still covers the
+  // pre-active case; a rider without a bridge session who goes on to have
+  // approval revoked while already active won't find out until they
+  // background/foreground or remount this screen, same as before this fix.
+  useEffect(() => {
+    if (!token) return;
+
     let cancelled = false;
     restoreRiderRealtimeSession(supabase).then((driverUserId) => {
       if (cancelled || !driverUserId) return;
@@ -366,8 +401,8 @@ export default function HomeScreen() {
             filter: `user_id=eq.${driverUserId}`,
           },
           (payload) => {
-            const newStatus = (payload.new as { status?: string })?.status ?? "";
-            if (newStatus === "active") applyActiveStatus();
+            const row = payload.new as { status?: string; is_approved?: boolean };
+            applyProfileUpdate(row?.status ?? "", row?.is_approved);
           }
         )
         .subscribe();
@@ -375,11 +410,10 @@ export default function HomeScreen() {
 
     return () => {
       cancelled = true;
-      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
       statusRealtimeChannelRef.current?.unsubscribe();
       statusRealtimeChannelRef.current = null;
     };
-  }, [driverStatus, token, verifiedBannerAnim]);
+  }, [token, applyProfileUpdate]);
 
   // timestamp is the GPS fix's own capture time (ms since epoch), not when
   // it's sent — lets the backend reject a stale cached fix even though it
