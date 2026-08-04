@@ -1024,7 +1024,7 @@ export default function HomeScreen() {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                           setIgnoredOfferIds((prev) => new Set([...prev, offer.offer_id]));
                         }}
-                        disabled={!!accepting}
+                        disabled={accepting === offer.offer_id}
                         activeOpacity={0.7}
                       >
                         <Text style={styles.ignoreBtnText}>Ignore</Text>
