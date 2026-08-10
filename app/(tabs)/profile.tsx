@@ -38,6 +38,17 @@ type Profile = {
   created_at: string;
 };
 
+// rider_profile_change_requests now also carries upi_id (billing-info.tsx
+// submits into the same table/queue this screen already polls) — this used
+// to be a 3-way name/email/address ternary that would have silently
+// mislabeled it as "Address".
+const CHANGE_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  email: "Email",
+  address: "Address",
+  upi_id: "UPI ID",
+};
+
 export default function ProfileScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -397,7 +408,7 @@ export default function ProfileScreen() {
                 <Text style={styles.pendingBannerTitle}>Changes pending admin review</Text>
                 {Object.entries(pendingChangeRequest.changes).map(([field, diff]) => (
                   <Text key={field} style={styles.pendingBannerLine}>
-                    {field === "name" ? "Name" : field === "email" ? "Email" : "Address"}: {diff.new}
+                    {CHANGE_FIELD_LABELS[field] || field}: {diff.new}
                   </Text>
                 ))}
               </View>

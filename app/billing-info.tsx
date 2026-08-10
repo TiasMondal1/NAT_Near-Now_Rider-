@@ -21,6 +21,8 @@ import { uploadRiderImage } from "../lib/storage";
 import { fetchBillingInfo, saveBillingInfo } from "../lib/billingInfo";
 import VerificationNavBar from "../components/VerificationNavBar";
 
+type PendingChangeRequest = { changes: Record<string, { old: string | null; new: string }> } | null;
+
 export default function BillingInfoScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -32,6 +34,28 @@ export default function BillingInfoScreen() {
 
   const [upiId, setUpiId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [pendingChangeRequest, setPendingChangeRequest] = useState<PendingChangeRequest>(null);
+
+  const loadPendingChangeRequest = async (t: string) => {
+    try {
+      const json = await apiFetch<{ success: boolean; request: PendingChangeRequest }>(
+        "/delivery-partner/profile-change-request",
+        {},
+        t
+      );
+      // profile.tsx's identity-field edits (name/email/address) share this
+      // same request queue — only surface it here if it actually contains
+      // upi_id, otherwise this screen would show a "pending review" banner
+      // for a change it has nothing to do with.
+      if (json?.request && "upi_id" in json.request.changes) {
+        setPendingChangeRequest(json.request);
+      } else {
+        setPendingChangeRequest(null);
+      }
+    } catch {
+      /* non-fatal — banner just doesn't show */
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -51,6 +75,7 @@ export default function BillingInfoScreen() {
       } finally {
         setLoading(false);
       }
+      void loadPendingChangeRequest(session.token);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -114,7 +139,8 @@ export default function BillingInfoScreen() {
         Alert.alert("Error", res.error);
         return;
       }
-      Alert.alert("Saved", "Your billing info has been saved.");
+      Alert.alert("Submitted for review", "Your billing info change has been sent to the admin team for review before it takes effect.");
+      void loadPendingChangeRequest(token);
     } finally {
       setSaving(false);
     }
@@ -141,6 +167,16 @@ export default function BillingInfoScreen() {
           <MaterialCommunityIcons name="credit-card-outline" size={22} color={Colors.accent} />
           <Text style={styles.noticeText}>Billing info is used to pay out your delivery earnings.</Text>
         </View>
+
+        {pendingChangeRequest && (
+          <View style={styles.pendingBanner}>
+            <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.warning} />
+            <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+              <Text style={styles.pendingBannerTitle}>Change pending admin review</Text>
+              <Text style={styles.pendingBannerLine}>UPI ID: {pendingChangeRequest.changes.upi_id?.new}</Text>
+            </View>
+          </View>
+        )}
 
         <View style={styles.card}>
           <View style={styles.avatarRow}>
@@ -238,6 +274,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.accent + "25",
   },
   noticeText: { flex: 1, color: Colors.accentDark, fontSize: 13, lineHeight: 18 },
+  pendingBanner: { flexDirection: "row", alignItems: "flex-start", backgroundColor: Colors.warningLight, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.warning, padding: Spacing.md, marginTop: Spacing.md },
+  pendingBannerTitle: { fontWeight: "700", fontSize: 13, color: Colors.text, marginBottom: 2 },
+  pendingBannerLine: { fontSize: 12, color: Colors.textSecondary },
   card: {
     backgroundColor: Colors.card,
     borderWidth: 1,
