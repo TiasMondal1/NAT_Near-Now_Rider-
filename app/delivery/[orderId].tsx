@@ -88,12 +88,20 @@ function PickupStopCard({
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [codeErr, setCodeErr] = useState("");
+  // `verifying` state only disables the button after React commits the
+  // re-render — a fast double-tap, or a tap racing the number pad's
+  // onSubmitEditing, can fire two verify-code POSTs before that happens
+  // (same class of race already fixed for handleAcceptOffer in home.tsx). A
+  // ref updates immediately, so this closes the gap synchronously.
+  const verifyingRef = useRef(false);
 
   const verify = async () => {
     if (!/^\d{4}$/.test(code)) {
       setCodeErr("Enter the 4-digit code");
       return;
     }
+    if (verifyingRef.current) return;
+    verifyingRef.current = true;
     setVerifying(true);
     setCodeErr("");
     try {
@@ -109,6 +117,7 @@ function PickupStopCard({
     } catch (e: any) {
       setCodeErr(e?.error || e?.message || "Incorrect code — try again");
     } finally {
+      verifyingRef.current = false;
       setVerifying(false);
     }
   };
@@ -267,6 +276,10 @@ export default function DeliveryScreen() {
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpErr, setOtpErr] = useState("");
+  // Same synchronous double-submit guard as PickupStopCard's verifyingRef —
+  // otpVerifying state alone can't block a fast double-tap or a tap racing
+  // onSubmitEditing before React commits the disabling re-render.
+  const otpVerifyingRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [driverLat, setDriverLat] = useState<number | null>(null);
   const [driverLng, setDriverLng] = useState<number | null>(null);
@@ -385,6 +398,8 @@ export default function DeliveryScreen() {
 
   const verifyDeliveryOtp = async () => {
     if (!/^\d{4}$/.test(deliveryOtp)) { setOtpErr("Enter the 4-digit OTP"); return; }
+    if (otpVerifyingRef.current) return;
+    otpVerifyingRef.current = true;
     setOtpVerifying(true);
     setOtpErr("");
     try {
@@ -400,6 +415,7 @@ export default function DeliveryScreen() {
     } catch (e: any) {
       setOtpErr(e?.error || e?.message || "Incorrect OTP — ask customer to check their app");
     } finally {
+      otpVerifyingRef.current = false;
       setOtpVerifying(false);
     }
   };
