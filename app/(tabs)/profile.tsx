@@ -270,6 +270,21 @@ export default function ProfileScreen() {
         text: "Logout",
         style: "destructive",
         onPress: async () => {
+          // Clear the push token before wiping the session (needs the auth
+          // token to authenticate the call) — otherwise a shared device kept
+          // this rider's expo_push_token registered indefinitely, so the
+          // next rider logging in on the same device would receive this
+          // rider's order offers/status pushes until it happened to get
+          // overwritten. Same fix already applied to the customer and
+          // store-owner apps; this app was the one missed.
+          try {
+            const session = await getSession();
+            if (session?.token) {
+              await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
+            }
+          } catch {
+            // Non-fatal — logging out should never be blocked by this.
+          }
           await clearSession();
           router.replace("/phone");
         },

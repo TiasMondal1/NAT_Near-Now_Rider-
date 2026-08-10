@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +33,7 @@ export default function BillingInfoScreen() {
   const [uploadingImage, setUploadingImage] = useState(false);
 
   const [upiId, setUpiId] = useState("");
+  const originalUpiIdRef = useRef("");
   const [saving, setSaving] = useState(false);
   const [pendingChangeRequest, setPendingChangeRequest] = useState<PendingChangeRequest>(null);
 
@@ -57,6 +58,15 @@ export default function BillingInfoScreen() {
     }
   };
 
+  // While a billing change is pending, poll for the admin's decision so the
+  // banner clears without needing to leave and re-enter this screen — mirrors
+  // profile.tsx's identical pattern for identity-field pending requests.
+  useEffect(() => {
+    if (!pendingChangeRequest || !token) return;
+    const interval = setInterval(() => loadPendingChangeRequest(token), 20_000);
+    return () => clearInterval(interval);
+  }, [pendingChangeRequest, token]);
+
   useEffect(() => {
     (async () => {
       const session = await getSession();
@@ -70,6 +80,7 @@ export default function BillingInfoScreen() {
         setName(info.name);
         setProfileImageUrl(info.profileImageUrl);
         setUpiId(info.upiId ?? "");
+        originalUpiIdRef.current = info.upiId ?? "";
       } catch {
         /* non-fatal — screen still renders with empty state */
       } finally {
@@ -132,6 +143,16 @@ export default function BillingInfoScreen() {
       Alert.alert("Invalid UPI ID", "Expected format e.g. name@bank.");
       return;
     }
+    // The profile photo already saves immediately on pick — this button only
+    // ever submits the UPI field, so tapping it without having edited UPI
+    // (e.g. after just changing the photo, or a habitual re-tap) previously
+    // surfaced the backend's generic "No changes to submit" error, easy to
+    // trigger unintentionally since the photo picker and this button aren't
+    // visually linked.
+    if (trimmed === originalUpiIdRef.current) {
+      Alert.alert("Nothing to save", "Your UPI ID hasn't changed.");
+      return;
+    }
     setSaving(true);
     try {
       const res = await saveBillingInfo(token, trimmed);
@@ -140,6 +161,7 @@ export default function BillingInfoScreen() {
         return;
       }
       Alert.alert("Submitted for review", "Your billing info change has been sent to the admin team for review before it takes effect.");
+      originalUpiIdRef.current = trimmed;
       void loadPendingChangeRequest(token);
     } finally {
       setSaving(false);
