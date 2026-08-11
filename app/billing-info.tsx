@@ -50,6 +50,11 @@ export default function BillingInfoScreen() {
       // for a change it has nothing to do with.
       if (json?.request && "upi_id" in json.request.changes) {
         setPendingChangeRequest(json.request);
+        // The DB column stays untouched until admin approval, so the input
+        // must show the submitted value from the pending request itself —
+        // otherwise it renders blank (or the stale old value) while "pending
+        // review" is displayed right next to it.
+        setUpiId(json.request.changes.upi_id.new);
       } else {
         setPendingChangeRequest(null);
       }

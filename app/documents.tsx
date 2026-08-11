@@ -373,7 +373,9 @@ export default function DocumentsScreen() {
         anySubmitted
           ? "Your documents have been submitted. Our team will verify them before you can go online."
           : "Upload the remaining documents to complete verification.",
-        [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
+        anySubmitted
+          ? [{ text: "OK", onPress: () => router.replace("/billing-info") }]
+          : undefined
       );
     } catch {
       Alert.alert("Error", "Failed to save one or more documents. Please try again.");
