@@ -27,10 +27,16 @@ type Order = {
   /** Real payout amount for this order (flat fee + tip), from delivery_partners_payouts.
    * null for orders delivered before this was wired up — no payout row exists for those. */
   payout_amount: number | null;
+  /** When the payout row was written (i.e. delivery/settlement time), or null for legacy orders. */
+  payout_created_at: string | null;
 };
 
 /** Real earnings for this order, or 0 if no payout row exists yet (pre-fix orders). */
 const orderEarning = (o: Order) => o.payout_amount ?? 0;
+
+/** Bucket by when the rider was actually paid, not when the customer placed the order —
+ * falls back to placed_at for legacy orders with no payout row. */
+const earningDate = (o: Order) => new Date(o.payout_created_at ?? o.placed_at);
 
 type Period = "today" | "week" | "all";
 
@@ -91,10 +97,10 @@ export default function EarningsScreen() {
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const todayOrders = orders.filter(
-    (o) => new Date(o.placed_at).toDateString() === todayStr
+    (o) => earningDate(o).toDateString() === todayStr
   );
   const weekOrders = orders.filter(
-    (o) => new Date(o.placed_at) >= weekAgo
+    (o) => earningDate(o) >= weekAgo
   );
 
   const todayEarnings = todayOrders.reduce((sum, o) => sum + orderEarning(o), 0);
