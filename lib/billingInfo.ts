@@ -18,9 +18,9 @@ export async function fetchBillingInfo(token: string): Promise<BillingInfo> {
 export async function saveBillingInfo(
   token: string,
   upiId: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
   try {
-    const json = await apiFetch<{ success: boolean; error?: string }>(
+    const json = await apiFetch<{ success: boolean; cancelled?: boolean; error?: string }>(
       "/delivery-partner/billing-info",
       { method: "PATCH", body: { upi_id: upiId } },
       token
@@ -28,7 +28,7 @@ export async function saveBillingInfo(
     if (!json?.success) {
       return { ok: false, error: json?.error || "Failed to save billing info" };
     }
-    return { ok: true };
+    return { ok: true, cancelled: !!json.cancelled };
   } catch (e: any) {
     return { ok: false, error: e?.error || e?.message || "Network error" };
   }

@@ -54,7 +54,14 @@ export default function BillingInfoScreen() {
         // must show the submitted value from the pending request itself —
         // otherwise it renders blank (or the stale old value) while "pending
         // review" is displayed right next to it.
-        setUpiId(json.request.changes.upi_id.new);
+        const pendingUpi = json.request.changes.upi_id.new;
+        setUpiId(pendingUpi);
+        // Also update the "nothing changed" baseline to match — otherwise
+        // handleSave's originalUpiIdRef guard still compares against the
+        // stale committed DB value, never matches the pending value, and
+        // silently resubmits an identical duplicate change request every
+        // time the rider reopens this screen and taps Save without editing.
+        originalUpiIdRef.current = pendingUpi;
       } else {
         setPendingChangeRequest(null);
       }
@@ -165,7 +172,11 @@ export default function BillingInfoScreen() {
         Alert.alert("Error", res.error);
         return;
       }
-      Alert.alert("Submitted for review", "Your billing info change has been sent to the admin team for review before it takes effect.");
+      if (res.cancelled) {
+        Alert.alert("Request withdrawn", "Your pending UPI change has been withdrawn since it matched your current UPI ID.");
+      } else {
+        Alert.alert("Submitted for review", "Your billing info change has been sent to the admin team for review before it takes effect.");
+      }
       originalUpiIdRef.current = trimmed;
       void loadPendingChangeRequest(token);
     } finally {

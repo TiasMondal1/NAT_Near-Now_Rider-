@@ -120,7 +120,11 @@ export default function ProfileScreen() {
         t
       );
       if (seq !== pollSeqRef.current) return;
-      if (!res.success) return;
+      if (!res.success) {
+        setLoadError(true);
+        return;
+      }
+      setLoadError(false);
 
       const nextRequest = res.request ?? null;
       const prev = pendingChangeRequestRef.current;
@@ -134,7 +138,14 @@ export default function ProfileScreen() {
         fetchProfile(t).catch(() => {});
       }
     } catch {
-      /* non-fatal */
+      // Unlike the other risk-comparable screens (Delivery/Orders/Earnings,
+      // already fixed for this), this poll's own failures were silently
+      // swallowed with no staleness signal at all — a rider mid-edit with a
+      // pending change request had no way to tell the 20s poll checking on
+      // its approval status had stopped working. loadError now covers both
+      // this poll and the initial fetchProfile load, surfaced via the same
+      // staleBanner pattern once real data is already on screen.
+      setLoadError(true);
     }
   }, [fetchProfile]);
 
@@ -229,7 +240,19 @@ export default function ProfileScreen() {
       if (email.trim() !== (profile?.email ?? "")) patch.email = email.trim();
       if (address.trim() !== (profile?.address ?? "")) patch.address = address.trim();
 
-      if (Object.keys(patch).length === 0) {
+      // A genuinely-untouched form only needs a local bail. But if every
+      // edited field was reverted back to its committed value while an
+      // identity-field change request from an earlier session is still
+      // pending, an empty patch here must still reach the backend — that's
+      // the only way it learns the field was reverted and can withdraw the
+      // now-stale request (see submitProfileChangeRequestInternal's
+      // ownedFields reconciliation). Without this, a reverted field's stale
+      // pending entry could sit forever with no way to cancel it (found
+      // 2026-08-11).
+      const hasPendingIdentityFields =
+        !!pendingChangeRequest &&
+        Object.keys(pendingChangeRequest.changes).some((f) => (["name", "email", "address"] as const).includes(f as "name" | "email" | "address"));
+      if (Object.keys(patch).length === 0 && !hasPendingIdentityFields) {
         setEditing(false);
         return;
       }
@@ -256,7 +279,11 @@ export default function ProfileScreen() {
         setAddress(profile.address || "");
       }
       setEditing(false);
-      Alert.alert("Submitted for review", "Your requested changes have been sent to the admin team and will apply once approved.");
+      if ((res as { cancelled?: boolean }).cancelled) {
+        Alert.alert("Request withdrawn", "Your pending change request has been withdrawn since it matched your current details.");
+      } else {
+        Alert.alert("Submitted for review", "Your requested changes have been sent to the admin team and will apply once approved.");
+      }
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to save profile.");
     }
@@ -359,6 +386,12 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         automaticallyAdjustKeyboardInsets
       >
+        {loadError && profile && (
+          <View style={styles.staleBanner}>
+            <MaterialCommunityIcons name="wifi-alert" size={14} color={Colors.warning} />
+            <Text style={styles.staleBannerText}>Connection issue — this screen may be showing outdated info</Text>
+          </View>
+        )}
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           <View style={styles.avatarSection}>
             <TouchableOpacity
@@ -613,6 +646,17 @@ const styles = StyleSheet.create({
   editBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: Colors.accentLight, borderRadius: BorderRadius.round, paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: Colors.accentLight },
   editBtnText: { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   cancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: "600" },
+  staleBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.warningLight,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    marginBottom: Spacing.md,
+  },
+  staleBannerText: { color: Colors.warning, fontSize: 12, fontWeight: "600", flex: 1 },
   scroll: { padding: Spacing.lg, paddingBottom: 140 },
 
   topBar: {

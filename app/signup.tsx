@@ -169,7 +169,25 @@ export default function SignupScreen() {
   const isEmailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const normalizedPhone = String(phone || "").trim();
 
+  // Clear the push token before wiping the session (needs the auth token to
+  // authenticate the call) — otherwise a shared device kept this rider's
+  // expo_push_token registered indefinitely, so the next rider logging in
+  // on the same device would receive this rider's order offers/status
+  // pushes until it happened to get overwritten. Same guard profile.tsx
+  // already has; this screen and pending-verification.tsx were missed.
+  const clearPushTokenBeforeLogout = async () => {
+    try {
+      const session = await getSession();
+      if (session?.token) {
+        await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
+      }
+    } catch {
+      // Non-fatal — logging out should never be blocked by this.
+    }
+  };
+
   const handleGoBack = async () => {
+    await clearPushTokenBeforeLogout();
     await clearSession();
     router.replace("/phone");
   };
@@ -181,6 +199,7 @@ export default function SignupScreen() {
         text: "Logout",
         style: "destructive",
         onPress: async () => {
+          await clearPushTokenBeforeLogout();
           await clearSession();
           router.replace("/phone");
         },
