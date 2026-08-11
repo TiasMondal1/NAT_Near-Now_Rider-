@@ -267,7 +267,11 @@ export default function HomeScreen() {
   useEffect(() => {
     (async () => {
       const session = await getSession();
-      if (!session?.token) return;
+      if (!session?.token) {
+        setLoading(false);
+        router.replace("/phone");
+        return;
+      }
       setToken(session.token);
       setUserName(session.user?.name || "");
 
@@ -302,7 +306,7 @@ export default function HomeScreen() {
       if (pollRef.current) clearInterval(pollRef.current);
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [requestLocationPermissions]);
+  }, [requestLocationPermissions, router]);
 
   // Mirrors driverStatus for the realtime handler below, which is set up
   // once per token (not re-subscribed on every status change) and so needs

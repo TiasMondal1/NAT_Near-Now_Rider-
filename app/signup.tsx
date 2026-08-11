@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack, useRouter, useLocalSearchParams } from "expo-router";
+import { Stack, useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
@@ -63,6 +63,11 @@ export default function SignupScreen() {
   );
   const [loading, setLoading] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [profileFetchFailed, setProfileFetchFailed] = useState(false);
+  // Tracks whether the network profile fetch has ever completed (success or
+  // failure) so useFocusEffect knows to retry a fetch that silently failed
+  // on first mount instead of re-fetching on every tab switch unnecessarily.
+  const profileFetchedRef = useRef(false);
 
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>(
     cached?.profile?.profile_image_url ?? null
@@ -73,56 +78,77 @@ export default function SignupScreen() {
   // succeeds and a real user id exists (see there for the upload call).
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      if (phoneParam) {
-        setPhone(String(phoneParam));
-        return; // fresh from OTP verify — editable mode, nothing else to load
-      }
-      const session = await getSession();
-      if (session?.user?.phone) setPhone(session.user.phone);
-      if (!session?.token || session.needsSignupCompletion) {
-        setViewOnly(false);
-        return;
-      }
-      setViewOnly(true);
+  const fetchProfile = useCallback(async () => {
+    const session = await getSession();
+    if (session?.user?.phone) setPhone(session.user.phone);
+    if (!session?.token || session.needsSignupCompletion) {
+      setViewOnly(false);
+      return;
+    }
+    setViewOnly(true);
 
-      // Only show a blocking spinner if nothing was available from cache —
-      // otherwise the page already has real content on screen and this
-      // fetch just fills in email/address/phone in the background.
-      if (!cached?.profile) setLoadingProfile(true);
-      try {
-        const res = await apiFetch<{
-          success: boolean;
-          profile?: {
-            name?: string;
-            email?: string;
-            address?: string;
-            phone?: string;
-            vehicle_type?: string;
-            profile_image_url?: string | null;
-          };
-        }>("/delivery-partner/profile", {}, session.token);
-        if (res.success && res.profile) {
-          setName(res.profile.name || "");
-          setEmail(res.profile.email || "");
-          setAddress(res.profile.address || "");
-          if (res.profile.phone) setPhone(res.profile.phone);
-          if (res.profile.vehicle_type) setVehicleType(res.profile.vehicle_type as VehicleType);
-          if (res.profile.profile_image_url !== undefined) setProfileImageUrl(res.profile.profile_image_url ?? null);
-        }
-      } catch {
-        // non-fatal — screen still shows whatever session/cache info it already has
-      } finally {
-        setLoadingProfile(false);
+    // Only show a blocking spinner if nothing was available from cache —
+    // otherwise the page already has real content on screen and this
+    // fetch just fills in email/address/phone in the background.
+    if (!cached?.profile) setLoadingProfile(true);
+    try {
+      const res = await apiFetch<{
+        success: boolean;
+        profile?: {
+          name?: string;
+          email?: string;
+          address?: string;
+          phone?: string;
+          vehicle_type?: string;
+          profile_image_url?: string | null;
+        };
+      }>("/delivery-partner/profile", {}, session.token);
+      if (res.success && res.profile) {
+        setName(res.profile.name || "");
+        setEmail(res.profile.email || "");
+        setAddress(res.profile.address || "");
+        if (res.profile.phone) setPhone(res.profile.phone);
+        if (res.profile.vehicle_type) setVehicleType(res.profile.vehicle_type as VehicleType);
+        if (res.profile.profile_image_url !== undefined) setProfileImageUrl(res.profile.profile_image_url ?? null);
       }
-    })();
+      profileFetchedRef.current = true;
+      setProfileFetchFailed(false);
+    } catch {
+      // Previously swallowed silently, leaving the screen stuck blank until
+      // the rider happened to bounce to another tab and back (which forces a
+      // fresh mount). profileFetchedRef stays false so the useFocusEffect
+      // below retries automatically on the next focus instead of relying on
+      // that manual workaround.
+      setProfileFetchFailed(true);
+    } finally {
+      setLoadingProfile(false);
+    }
     // `cached` is intentionally read only once at mount to decide whether to
     // show a spinner, not re-evaluated reactively — re-running this whole
     // effect on every cache mutation elsewhere in the app would refetch the
     // profile unnecessarily.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneParam]);
+  }, []);
+
+  useEffect(() => {
+    if (phoneParam) {
+      setPhone(String(phoneParam));
+      return; // fresh from OTP verify — editable mode, nothing else to load
+    }
+    fetchProfile();
+  }, [phoneParam, fetchProfile]);
+
+  // Self-heals a failed (or not-yet-attempted) first fetch the moment this
+  // screen regains focus — e.g. the rider switching to Status and back,
+  // which is exactly the manual workaround that used to be required to see
+  // Your Details populate after a transient cold-start network failure.
+  useFocusEffect(
+    useCallback(() => {
+      if (!phoneParam && profileFetchedRef.current === false) {
+        fetchProfile();
+      }
+    }, [phoneParam, fetchProfile])
+  );
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -358,6 +384,15 @@ export default function SignupScreen() {
               <ActivityIndicator color={Colors.accent} style={{ marginVertical: Spacing.xl }} />
             ) : (
               <>
+                {viewOnly && profileFetchFailed && !email && (
+                  <TouchableOpacity
+                    style={styles.retryBanner}
+                    onPress={fetchProfile}
+                  >
+                    <MaterialCommunityIcons name="reload" size={16} color={Colors.accent} />
+                    <Text style={styles.retryBannerText}>Couldn&apos;t load your details — tap to retry</Text>
+                  </TouchableOpacity>
+                )}
                 <View style={styles.card}>
                   <Text style={styles.label}>Phone</Text>
                   <View style={styles.readOnlyField}>
@@ -507,6 +542,15 @@ const styles = StyleSheet.create({
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
   },
+  retryBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  retryBannerText: { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   avatarSection: { alignItems: "center", marginTop: Spacing.md, marginBottom: Spacing.md },
   avatarTouch: { position: "relative" },
   avatar: {
