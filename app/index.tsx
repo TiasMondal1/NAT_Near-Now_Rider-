@@ -34,7 +34,7 @@ export default function EntryScreen() {
           });
         } else if (session?.token && session?.user?.id) {
           const { resolveAuthenticatedRoute } = await import("../lib/riderVerification");
-          router.replace(await resolveAuthenticatedRoute(session.token));
+          router.replace(await resolveAuthenticatedRoute(session.token, { forceDetailsLanding: true }));
         } else {
           router.replace("/phone");
         }

@@ -87,10 +87,17 @@ export async function checkRiderVerification(token: string): Promise<{
 }
 
 export async function resolveAuthenticatedRoute(
-  token: string
-): Promise<"/(tabs)/home" | "/pending-verification" | "/documents"> {
+  token: string,
+  opts?: { forceDetailsLanding?: boolean }
+): Promise<"/(tabs)/home" | "/pending-verification" | "/documents" | "/signup"> {
   const { verified, documentsUploaded } = await checkRiderVerification(token);
   if (verified) return "/(tabs)/home";
+  // A returning, already-signed-up rider who isn't verified yet always lands
+  // on Details first (from index.tsx/_layout.tsx re-entry) — they can then
+  // move freely between Details/Documents/Billing/Status via
+  // VerificationNavBar. This does NOT apply to signup.tsx's own post-submit
+  // redirect, which should keep moving the rider forward to Documents.
+  if (opts?.forceDetailsLanding) return "/signup";
   // Docs uploaded but waiting on admin → pending. Missing docs → upload page.
   return documentsUploaded ? "/pending-verification" : "/documents";
 }

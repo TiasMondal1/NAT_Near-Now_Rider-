@@ -161,9 +161,9 @@ export default function RootLayout() {
 
       if (loggedIn && inAuthFlow && session?.token) {
         try {
-          router.replace(await resolveAuthenticatedRoute(session.token));
+          router.replace(await resolveAuthenticatedRoute(session.token, { forceDetailsLanding: true }));
         } catch {
-          router.replace("/pending-verification");
+          router.replace("/signup");
         }
       } else if (!loggedIn && (inProtectedFlow || inSignupFlow)) {
         // Signup without a session (ticket-only) is allowed; only kick protected screens.

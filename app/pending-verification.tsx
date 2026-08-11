@@ -13,16 +13,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
-import { clearSession } from "../session";
+import { clearSession, getSession } from "../session";
 import { supabase } from "../lib/supabase";
+import { apiFetch } from "../constants/api";
 import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
+import { fetchBillingInfo } from "../lib/billingInfo";
 import { ADMIN_CONTACTS, formatPhoneForDisplay } from "../constants/config";
 import VerificationNavBar from "../components/VerificationNavBar";
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
+  { key: "billing", label: "Upload billing details", icon: "credit-card-outline" as const },
   { key: "review", label: "Admin verification", icon: "shield-check-outline" as const },
   { key: "live", label: "Start delivering", icon: "truck-fast-outline" as const },
 ];
@@ -58,33 +61,51 @@ export default function PendingVerificationScreen() {
 
   const hasSubmittedDocs = documentsUploaded;
 
+  // Neither useRiderVerificationGate nor its profile fetch knows about
+  // billing/UPI — that lives entirely in billing-info.tsx's own fetch +
+  // change-request endpoints — so this screen tracks it separately to know
+  // whether the "Upload billing details" step is done.
+  const [billingComplete, setBillingComplete] = useState(false);
+  const checkBillingStatus = useCallback(async () => {
+    const session = await getSession();
+    if (!session?.token) return;
+    try {
+      const [info, changeReqJson] = await Promise.all([
+        fetchBillingInfo(session.token),
+        apiFetch<{ success: boolean; request: { changes: Record<string, unknown> } | null }>(
+          "/delivery-partner/profile-change-request",
+          {},
+          session.token
+        ).catch(() => null),
+      ]);
+      const hasPendingUpi = !!changeReqJson?.request && "upi_id" in changeReqJson.request.changes;
+      setBillingComplete(!!info.upiId || hasPendingUpi);
+    } catch {
+      /* non-fatal — step just shows as not-yet-done */
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkBillingStatus();
+  }, [checkBillingStatus]);
+
   const checkApprovalNow = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      await refresh();
+      await Promise.all([refresh(), checkBillingStatus()]);
     } catch {
       if (!silent) Alert.alert("Could not refresh", "Check your connection and try again.");
     } finally {
       if (!silent) setRefreshing(false);
     }
-  }, [refresh]);
+  }, [refresh, checkBillingStatus]);
 
   // Deliberately no auto-redirect to /documents when docs are incomplete —
   // this screen must stay freely reachable via the back button while docs
   // are still in progress (the rider tapped back from /documents on
-  // purpose). The one-time "Account Verified" alert below is the only
-  // navigation this screen ever triggers on its own.
-  const verifiedAlertShownRef = useRef(false);
-  useEffect(() => {
-    if (verified && !verifiedAlertShownRef.current) {
-      verifiedAlertShownRef.current = true;
-      Alert.alert(
-        "Account Verified",
-        "Your documents have been approved. You can now use the app and go online for deliveries.",
-        [{ text: "Continue", onPress: () => router.replace("/(tabs)/home") }]
-      );
-    }
-  }, [verified, router]);
+  // purpose). Once approved, this screen also stays put (no auto-alert, no
+  // auto-navigate) — the rider sees the "Verified" state right here and
+  // moves on to /(tabs)/home only by tapping "Start Delivering" below.
 
   // Realtime: near-instant notice the moment an admin approves this rider,
   // via the narrowly-scoped Supabase Auth bridge session the backend mints
@@ -110,6 +131,7 @@ export default function PendingVerificationScreen() {
           },
           () => {
             void refresh();
+            void checkBillingStatus();
           }
         )
         .subscribe();
@@ -120,7 +142,7 @@ export default function PendingVerificationScreen() {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
     };
-  }, [refresh]);
+  }, [refresh, checkBillingStatus]);
 
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -147,7 +169,7 @@ export default function PendingVerificationScreen() {
     );
   }
 
-  const currentStep = hasSubmittedDocs ? 1 : 0;
+  const currentStep = verified ? 3 : billingComplete ? 2 : hasSubmittedDocs ? 1 : 0;
   const status = profile?.status || "pending_verification";
   const isSuspended = status === "suspended" || status === "offboarded";
 
@@ -171,18 +193,20 @@ export default function PendingVerificationScreen() {
           <View style={styles.hero}>
             <View style={styles.heroIcon}>
               <MaterialCommunityIcons
-                name={isSuspended ? "alert-circle-outline" : "timer-sand"}
+                name={isSuspended ? "alert-circle-outline" : verified ? "check-circle-outline" : "timer-sand"}
                 size={34}
-                color={isSuspended ? Colors.danger : Colors.accent}
+                color={isSuspended ? Colors.danger : verified ? Colors.success : Colors.accent}
               />
             </View>
             <Text style={styles.heroTitle}>
-              {isSuspended ? "Account Restricted" : "Verification Pending"}
+              {isSuspended ? "Account Restricted" : verified ? "Account Verified" : "Verification Pending"}
             </Text>
             <Text style={styles.heroSub}>
               {isSuspended
                 ? "Your account is not active. Contact support for assistance."
-                : "You can access deliveries only after our team verifies your documents."}
+                : verified
+                  ? "Your documents have been approved. Tap below to start delivering."
+                  : "You can access deliveries only after our team verifies your documents."}
             </Text>
           </View>
 
@@ -191,14 +215,25 @@ export default function PendingVerificationScreen() {
               <MaterialCommunityIcons name="account-circle-outline" size={22} color={Colors.accent} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.nameText}>{profile.name}</Text>
-                <Text style={styles.nameMeta}>
-                  {isSuspended ? "Not allowed to go online" : "Not verified yet"}
+                <Text style={[styles.nameMeta, verified && styles.nameMetaVerified]}>
+                  {isSuspended ? "Not allowed to go online" : verified ? "Verified" : "Not verified yet"}
                 </Text>
               </View>
             </View>
           ) : null}
 
-          {!isSuspended && (
+          {!isSuspended && verified && (
+            <TouchableOpacity
+              style={[styles.primaryBtn, { marginBottom: Spacing.md }]}
+              onPress={() => router.replace("/(tabs)/home")}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="truck-fast-outline" size={18} color="#fff" />
+              <Text style={styles.primaryBtnText}>Start Delivering</Text>
+            </TouchableOpacity>
+          )}
+
+          {!isSuspended && !verified && (
             <>
               <View style={styles.stepsCard}>
                 <Text style={styles.sectionTitle}>What happens next</Text>
@@ -227,6 +262,11 @@ export default function PendingVerificationScreen() {
                         {active && step.key === "upload" && (
                           <Text style={styles.stepHint}>
                             Upload Aadhaar, PAN, Driving License and vehicle details
+                          </Text>
+                        )}
+                        {active && step.key === "billing" && (
+                          <Text style={styles.stepHint}>
+                            Add your UPI ID so we can pay out your delivery earnings
                           </Text>
                         )}
                         {active && step.key === "review" && (
@@ -277,21 +317,23 @@ export default function PendingVerificationScreen() {
             </>
           )}
 
-          <TouchableOpacity
-            style={[styles.secondaryBtn, refreshing && { opacity: 0.6 }]}
-            onPress={() => checkApprovalNow(false)}
-            disabled={refreshing}
-            activeOpacity={0.85}
-          >
-            {refreshing ? (
-              <ActivityIndicator color={Colors.accent} />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="refresh" size={18} color={Colors.accent} />
-                <Text style={styles.secondaryBtnText}>Check Verification Status</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {!verified && (
+            <TouchableOpacity
+              style={[styles.secondaryBtn, refreshing && { opacity: 0.6 }]}
+              onPress={() => checkApprovalNow(false)}
+              disabled={refreshing}
+              activeOpacity={0.85}
+            >
+              {refreshing ? (
+                <ActivityIndicator color={Colors.accent} />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="refresh" size={18} color={Colors.accent} />
+                  <Text style={styles.secondaryBtnText}>Check Verification Status</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
 
           <View style={styles.helpCard}>
             <Text style={styles.sectionTitle}>Contact an admin</Text>
@@ -365,6 +407,7 @@ const styles = StyleSheet.create({
   },
   nameText: { color: Colors.text, fontSize: 16, fontWeight: "700" },
   nameMeta: { color: Colors.warning, fontSize: 12, fontWeight: "600", marginTop: 2 },
+  nameMetaVerified: { color: Colors.success },
   stepsCard: {
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.xl,
