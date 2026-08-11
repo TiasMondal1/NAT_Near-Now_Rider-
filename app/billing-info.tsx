@@ -148,8 +148,13 @@ export default function BillingInfoScreen() {
     }
   };
 
+  // Synchronous double-tap guard — `saving` state alone doesn't take effect
+  // until the next render commits, same class of fix as home.tsx's
+  // acceptingRef for accept-offer / the OTP-verify guard elsewhere.
+  const savingRef = useRef(false);
+
   const handleSave = async () => {
-    if (!token) return;
+    if (!token || savingRef.current) return;
     const trimmed = upiId.trim();
     if (trimmed && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,64}$/.test(trimmed)) {
       Alert.alert("Invalid UPI ID", "Expected format e.g. name@bank.");
@@ -165,6 +170,7 @@ export default function BillingInfoScreen() {
       Alert.alert("Nothing to save", "Your UPI ID hasn't changed.");
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     try {
       const res = await saveBillingInfo(token, trimmed);
@@ -180,6 +186,7 @@ export default function BillingInfoScreen() {
       originalUpiIdRef.current = trimmed;
       void loadPendingChangeRequest(token);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };

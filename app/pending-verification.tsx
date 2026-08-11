@@ -89,6 +89,17 @@ export default function PendingVerificationScreen() {
     void checkBillingStatus();
   }, [checkBillingStatus]);
 
+  // Retries periodically while billing isn't yet confirmed complete —
+  // previously only a manual "Check Verification Status" tap or an
+  // unrelated delivery_partners UPDATE ever re-ran this, so a one-off
+  // network blip at mount could leave "step 1 of 4" stuck indefinitely even
+  // after the rider genuinely completed billing.
+  useEffect(() => {
+    if (billingComplete) return;
+    const interval = setInterval(() => { void checkBillingStatus(); }, 30_000);
+    return () => clearInterval(interval);
+  }, [billingComplete, checkBillingStatus]);
+
   const checkApprovalNow = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
