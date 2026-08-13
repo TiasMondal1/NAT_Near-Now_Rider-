@@ -34,6 +34,35 @@ function fmtDist(d: number) {
   return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
 }
 
+function fmtCountdown(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Drives a live "wait Xs" countdown from apiFetch's `err.retryAfterSeconds`
+ * (the real Retry-After header express-rate-limit sends on a 429) instead of
+ * just showing a static "wait 3 minutes" the rider has no way to act on.
+ * Found + requested 2026-08-13. `secondsLeft` is null once expired/idle.
+ */
+function useRetryCountdown(onExpire?: () => void) {
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
+  useEffect(() => {
+    if (secondsLeft === null) return;
+    if (secondsLeft <= 0) {
+      onExpireRef.current?.();
+      return;
+    }
+    const id = setTimeout(() => setSecondsLeft((s) => (s !== null ? s - 1 : null)), 1000);
+    return () => clearTimeout(id);
+  }, [secondsLeft]);
+  const start = (seconds: number) => setSecondsLeft(Math.max(1, Math.round(seconds)));
+  return { secondsLeft: secondsLeft && secondsLeft > 0 ? secondsLeft : null, start };
+}
+
 type StoreStop = {
   allocation_id: string;
   sequence_number: number;
@@ -88,6 +117,7 @@ function PickupStopCard({
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [codeErr, setCodeErr] = useState("");
+  const retryCountdown = useRetryCountdown(() => setCodeErr(""));
   // `verifying` state only disables the button after React commits the
   // re-render — a fast double-tap, or a tap racing the number pad's
   // onSubmitEditing, can fire two verify-code POSTs before that happens
@@ -115,6 +145,7 @@ function PickupStopCard({
         onDone();
       }
     } catch (e: any) {
+      if (e?.retryAfterSeconds) retryCountdown.start(e.retryAfterSeconds);
       setCodeErr(e?.error || e?.message || "Incorrect code — try again");
     } finally {
       verifyingRef.current = false;
@@ -220,15 +251,21 @@ function PickupStopCard({
               placeholder="_ _ _ _"
               placeholderTextColor={Colors.textMuted}
               onSubmitEditing={verify}
+              editable={!retryCountdown.secondsLeft}
             />
             <TouchableOpacity
-              style={[styles.verifyBtn, (verifying || code.length !== 4) && styles.verifyBtnDisabled]}
+              style={[
+                styles.verifyBtn,
+                (verifying || code.length !== 4 || !!retryCountdown.secondsLeft) && styles.verifyBtnDisabled,
+              ]}
               onPress={verify}
-              disabled={verifying || code.length !== 4}
+              disabled={verifying || code.length !== 4 || !!retryCountdown.secondsLeft}
               activeOpacity={0.8}
             >
               {verifying ? (
                 <ActivityIndicator color={Colors.accentText} size="small" />
+              ) : retryCountdown.secondsLeft ? (
+                <Text style={styles.verifyBtnText}>{fmtCountdown(retryCountdown.secondsLeft)}</Text>
               ) : (
                 <Text style={styles.verifyBtnText}>Verify</Text>
               )}
@@ -237,7 +274,10 @@ function PickupStopCard({
           {codeErr ? (
             <View style={styles.codeErrRow}>
               <MaterialCommunityIcons name="alert-circle" size={14} color={Colors.danger} />
-              <Text style={styles.codeErrText}>{codeErr}</Text>
+              <Text style={styles.codeErrText}>
+                {codeErr}
+                {retryCountdown.secondsLeft ? ` — try again in ${fmtCountdown(retryCountdown.secondsLeft)}` : ""}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -276,6 +316,7 @@ export default function DeliveryScreen() {
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpErr, setOtpErr] = useState("");
+  const otpRetryCountdown = useRetryCountdown(() => setOtpErr(""));
   // Same synchronous double-submit guard as PickupStopCard's verifyingRef —
   // otpVerifying state alone can't block a fast double-tap or a tap racing
   // onSubmitEditing before React commits the disabling re-render.
@@ -413,6 +454,7 @@ export default function DeliveryScreen() {
         setOtpVerified(true);
       }
     } catch (e: any) {
+      if (e?.retryAfterSeconds) otpRetryCountdown.start(e.retryAfterSeconds);
       setOtpErr(e?.error || e?.message || "Incorrect OTP — ask customer to check their app");
     } finally {
       otpVerifyingRef.current = false;
@@ -565,22 +607,33 @@ export default function DeliveryScreen() {
                           placeholder="_ _ _ _"
                           placeholderTextColor={Colors.textMuted}
                           onSubmitEditing={verifyDeliveryOtp}
+                          editable={!otpRetryCountdown.secondsLeft}
                         />
                         <TouchableOpacity
-                          style={[styles.verifyBtn, (otpVerifying || deliveryOtp.length !== 4) && styles.verifyBtnDisabled]}
+                          style={[
+                            styles.verifyBtn,
+                            (otpVerifying || deliveryOtp.length !== 4 || !!otpRetryCountdown.secondsLeft) && styles.verifyBtnDisabled,
+                          ]}
                           onPress={verifyDeliveryOtp}
-                          disabled={otpVerifying || deliveryOtp.length !== 4}
+                          disabled={otpVerifying || deliveryOtp.length !== 4 || !!otpRetryCountdown.secondsLeft}
                           activeOpacity={0.8}
                         >
-                          {otpVerifying
-                            ? <ActivityIndicator color={Colors.accentText} size="small" />
-                            : <Text style={styles.verifyBtnText}>Verify</Text>}
+                          {otpVerifying ? (
+                            <ActivityIndicator color={Colors.accentText} size="small" />
+                          ) : otpRetryCountdown.secondsLeft ? (
+                            <Text style={styles.verifyBtnText}>{fmtCountdown(otpRetryCountdown.secondsLeft)}</Text>
+                          ) : (
+                            <Text style={styles.verifyBtnText}>Verify</Text>
+                          )}
                         </TouchableOpacity>
                       </View>
                       {otpErr ? (
                         <View style={styles.deliveryOtpErrRow}>
                           <MaterialCommunityIcons name="alert-circle" size={14} color={Colors.danger} />
-                          <Text style={styles.deliveryOtpErrText}>{otpErr}</Text>
+                          <Text style={styles.deliveryOtpErrText}>
+                            {otpErr}
+                            {otpRetryCountdown.secondsLeft ? ` — try again in ${fmtCountdown(otpRetryCountdown.secondsLeft)}` : ""}
+                          </Text>
                         </View>
                       ) : null}
                     </View>

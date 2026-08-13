@@ -77,6 +77,14 @@ export async function apiFetch<T = unknown>(
             ? data
             : { message: "Request failed" };
         const err: any = Object.assign(new Error((errorPayload as any).error || (errorPayload as any).message || "Request failed"), { status: res.status, ...errorPayload });
+        // express-rate-limit always sends this on a 429 — exact seconds until
+        // the window resets, so callers (e.g. the pickup-code/delivery-OTP
+        // rate-limit UI) can show a real countdown instead of a static
+        // "wait 3 minutes" the rider has no way to act on.
+        if (res.status === 429) {
+          const retryAfter = res.headers.get("Retry-After");
+          if (retryAfter) err.retryAfterSeconds = Number(retryAfter);
+        }
         // Don't retry 4xx errors (client mistakes)
         if (res.status >= 400 && res.status < 500) throw err;
         lastError = err;
