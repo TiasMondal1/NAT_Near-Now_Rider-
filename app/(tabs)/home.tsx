@@ -709,12 +709,26 @@ export default function HomeScreen() {
         await fetchActiveOrder();
         setOffers([]);
         router.push({ pathname: "/delivery/[orderId]", params: { orderId: res.order_id } });
-      } else if (res.result === "already_taken") {
+      }
+    } catch (err: any) {
+      // apiFetch throws (not returns) on any non-2xx response, with the
+      // backend's JSON body spread onto the thrown Error — so the
+      // "already_taken"/"driver_not_eligible" cases the backend returns as
+      // 409/403 (deliveryPartner.controller.ts's acceptOffer) never reached
+      // the `res.result === "already_taken"` check above, which only ever
+      // saw a 2xx success body. Every "someone else took it first" race —
+      // the single most likely failure during a live order-offer race —
+      // fell into a bare catch showing a generic "Failed to accept order"
+      // instead of the message this code was written to show.
+      if (err?.result === "already_taken") {
         Alert.alert("Too slow!", "Another driver accepted this order first.");
         await fetchOffers();
+      } else if (err?.result === "driver_not_eligible") {
+        Alert.alert("Can't accept", err?.error || "Go online to accept orders.");
+        await fetchOffers();
+      } else {
+        Alert.alert("Error", "Failed to accept order. Please try again.");
       }
-    } catch {
-      Alert.alert("Error", "Failed to accept order. Please try again.");
     } finally {
       acceptingRef.current = false;
       setAccepting(null);

@@ -21,6 +21,7 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constant
 import { apiFetch } from "../../constants/api";
 import { getSession, clearSession } from "../../session";
 import { uploadRiderImage } from "../../lib/storage";
+import { stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
 
 type Profile = {
   user_id: string;
@@ -304,14 +305,25 @@ export default function ProfileScreen() {
           // rider's order offers/status pushes until it happened to get
           // overwritten. Same fix already applied to the customer and
           // store-owner apps; this app was the one missed.
+          // Also mark the rider offline and tear down background location
+          // tracking before wiping the session — otherwise a rider logging
+          // out mid-shift stayed is_online=true server-side (so dispatch
+          // kept broadcasting new order offers to an account nobody could
+          // act on) and the Expo TaskManager background task + its
+          // persistent "Sharing your location…" notification kept running
+          // on-device indefinitely, since the task's own getSession() guard
+          // only silently no-ops per-firing once the token is gone rather
+          // than actually stopping itself.
           try {
             const session = await getSession();
             if (session?.token) {
+              await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: false } }, session.token, 0);
               await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
             }
           } catch {
             // Non-fatal — logging out should never be blocked by this.
           }
+          await stopBackgroundLocationTracking().catch(() => {});
           await clearSession();
           router.replace("/phone");
         },
