@@ -12,16 +12,32 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { createClient } from "@supabase/supabase-js";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { clearSession, getSession } from "../session";
-import { supabase } from "../lib/supabase";
 import { apiFetch } from "../constants/api";
 import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
 import { fetchBillingInfo } from "../lib/billingInfo";
-import { ADMIN_CONTACTS, formatPhoneForDisplay } from "../constants/config";
+import { ADMIN_CONTACTS, formatPhoneForDisplay, SUPABASE_CONFIG } from "../constants/config";
 import VerificationNavBar from "../components/VerificationNavBar";
+
+// A dedicated client, NOT the shared one from lib/supabase.ts (which
+// lib/storage.ts's uploadRiderImage() also uses for plain anon-key photo
+// uploads). restoreRiderRealtimeSession() below calls client.auth.setSession()
+// to mint a real Supabase Auth session for Realtime — on a shared client,
+// that silently flips every subsequent request's effective role from `anon`
+// to `authenticated`. The delivery_partner_image/delivery_partner_vehicle
+// storage buckets only grant `anon` a write policy (no `authenticated`
+// policy exists), so any photo upload made through the poisoned shared
+// client after this screen ran would fail with a real row-level-security
+// violation — this screen is the one every new/unapproved rider sits on
+// while awaiting approval, so new riders hit it consistently. home.tsx
+// already avoids this by creating its own independent client for the same
+// reason; this mirrors that pattern. Found 2026-08-14 from a direct user
+// report ("new riders keep getting row level errors... when uploading pics").
+const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
