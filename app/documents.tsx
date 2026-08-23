@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useRouter, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
@@ -133,32 +133,53 @@ export default function DocumentsScreen() {
   // Alert is dismissed, instead of looking identical to an untouched card.
   const [failedKeys, setFailedKeys] = useState<Set<DocKey>>(new Set());
   const suspendedRef = useRef(false);
+  // Tracks whether the profile/documents fetch has ever succeeded — lets the
+  // useFocusEffect below self-heal a failed first fetch (e.g. cold-start
+  // network blip) the moment this screen regains focus, mirroring
+  // signup.tsx's profileFetchedRef fix for the identical symptom.
+  const docsFetchedRef = useRef(false);
+
+  const loadDocuments = async () => {
+    const session = await getSession();
+    if (!session?.token) {
+      router.replace("/phone");
+      return;
+    }
+    setToken(session.token);
+    try {
+      const [profile, docs] = await Promise.all([
+        fetchRiderProfile(session.token),
+        fetchVerificationDocuments(session.token),
+      ]);
+      docsFetchedRef.current = true;
+      setVehicleType((profile?.vehicle_type as VehicleType | null) ?? null);
+      const { docs: next, numbers: nextNumbers } = docsToState(docs);
+      setServerDocs(next);
+      setNumbers(nextNumbers);
+    } catch {
+      /* non-fatal — screen still renders with empty state, self-heals via
+         the useFocusEffect below */
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      const session = await getSession();
-      if (!session?.token) {
-        router.replace("/phone");
-        return;
-      }
-      setToken(session.token);
-      try {
-        const [profile, docs] = await Promise.all([
-          fetchRiderProfile(session.token),
-          fetchVerificationDocuments(session.token),
-        ]);
-        setVehicleType((profile?.vehicle_type as VehicleType | null) ?? null);
-        const { docs: next, numbers: nextNumbers } = docsToState(docs);
-        setServerDocs(next);
-        setNumbers(nextNumbers);
-      } catch {
-        /* non-fatal — screen still renders with empty state */
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadDocuments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Self-heals a failed (or not-yet-attempted) first fetch the moment this
+  // screen regains focus — e.g. the rider switching to another
+  // VerificationNavBar tab and back, mirroring signup.tsx's identical fix.
+  useFocusEffect(
+    useCallback(() => {
+      if (!docsFetchedRef.current) {
+        void loadDocuments();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+  );
 
   const groups = ALL_GROUPS.filter(
     (g) => g.groupKey !== "vehicle_registration" || isVehicleRegistrationRequired(vehicleType)

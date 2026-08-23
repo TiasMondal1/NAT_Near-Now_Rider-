@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useRouter, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
@@ -36,6 +36,11 @@ export default function BillingInfoScreen() {
   const originalUpiIdRef = useRef("");
   const [saving, setSaving] = useState(false);
   const [pendingChangeRequest, setPendingChangeRequest] = useState<PendingChangeRequest>(null);
+  // Tracks whether the billing-info fetch has ever succeeded — lets the
+  // useFocusEffect below self-heal a failed first fetch (e.g. cold-start
+  // network blip right after signup) the moment this screen regains focus,
+  // mirroring signup.tsx's profileFetchedRef fix for the identical symptom.
+  const infoFetchedRef = useRef(false);
 
   const loadPendingChangeRequest = async (t: string) => {
     try {
@@ -79,29 +84,45 @@ export default function BillingInfoScreen() {
     return () => clearInterval(interval);
   }, [pendingChangeRequest, token]);
 
+  const loadBillingInfo = async () => {
+    const session = await getSession();
+    if (!session?.token) {
+      router.replace("/phone");
+      return;
+    }
+    setToken(session.token);
+    try {
+      const info = await fetchBillingInfo(session.token);
+      infoFetchedRef.current = true;
+      setName(info.name);
+      setProfileImageUrl(info.profileImageUrl);
+      setUpiId(info.upiId ?? "");
+      originalUpiIdRef.current = info.upiId ?? "";
+    } catch {
+      /* non-fatal — screen still renders with empty state, self-heals via
+         the useFocusEffect below */
+    } finally {
+      setLoading(false);
+    }
+    void loadPendingChangeRequest(session.token);
+  };
+
   useEffect(() => {
-    (async () => {
-      const session = await getSession();
-      if (!session?.token) {
-        router.replace("/phone");
-        return;
-      }
-      setToken(session.token);
-      try {
-        const info = await fetchBillingInfo(session.token);
-        setName(info.name);
-        setProfileImageUrl(info.profileImageUrl);
-        setUpiId(info.upiId ?? "");
-        originalUpiIdRef.current = info.upiId ?? "";
-      } catch {
-        /* non-fatal — screen still renders with empty state */
-      } finally {
-        setLoading(false);
-      }
-      void loadPendingChangeRequest(session.token);
-    })();
+    loadBillingInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Self-heals a failed (or not-yet-attempted) first fetch the moment this
+  // screen regains focus — e.g. the rider switching to another
+  // VerificationNavBar tab and back, mirroring signup.tsx's identical fix.
+  useFocusEffect(
+    useCallback(() => {
+      if (!infoFetchedRef.current) {
+        void loadBillingInfo();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+  );
 
   const pickProfileImage = async () => {
     if (profileImageUrl) return; // already set — read-only from here on
