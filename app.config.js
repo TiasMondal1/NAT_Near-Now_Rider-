@@ -21,7 +21,7 @@ module.exports = () => {
       splash: {
         image: "./Rider_Logo_nearNow.png",
         resizeMode: "contain",
-        backgroundColor: "#000000",
+        backgroundColor: "#FFFFFF",
       },
       ios: {
         supportsTablet: false,
