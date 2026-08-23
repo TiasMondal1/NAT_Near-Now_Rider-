@@ -21,31 +21,44 @@ const listenerRegistered = new WeakSet<SupabaseClient>();
  * caller should rely on its poll fallback instead.
  */
 export async function restoreRiderRealtimeSession(client: SupabaseClient): Promise<string | null> {
-  const session = await getSession();
-  if (!session?.supabaseSession || !session?.user?.id) return null;
+  // Every call site chains this with a bare `.then(...)`, no `.catch()` —
+  // client.auth.setSession() (GoTrue) can throw on some network/storage
+  // failure paths, not just resolve with `{ error }`, so this whole body is
+  // wrapped rather than relying on callers to catch it. An uncaught
+  // rejection here is exactly the failure shape that caused a real crash
+  // elsewhere in this app (see home.tsx's location-permission fix) —
+  // Realtime is a best-effort enhancement over the poll fallback, so any
+  // failure here should degrade to that, never crash.
+  try {
+    const session = await getSession();
+    if (!session?.supabaseSession || !session?.user?.id) return null;
 
-  const { error } = await client.auth.setSession({
-    access_token: session.supabaseSession.accessToken,
-    refresh_token: session.supabaseSession.refreshToken,
-  });
-  if (error) return null;
+    const { error } = await client.auth.setSession({
+      access_token: session.supabaseSession.accessToken,
+      refresh_token: session.supabaseSession.refreshToken,
+    });
+    if (error) return null;
 
-  if (!listenerRegistered.has(client)) {
-    listenerRegistered.add(client);
-    client.auth.onAuthStateChange((event, newSession) => {
-      if (event !== "TOKEN_REFRESHED" || !newSession) return;
-      getSession().then((current) => {
-        if (!current) return;
-        saveSession({
-          ...current,
-          supabaseSession: {
-            accessToken: newSession.access_token,
-            refreshToken: newSession.refresh_token,
-          },
+    if (!listenerRegistered.has(client)) {
+      listenerRegistered.add(client);
+      client.auth.onAuthStateChange((event, newSession) => {
+        if (event !== "TOKEN_REFRESHED" || !newSession) return;
+        getSession().then((current) => {
+          if (!current) return;
+          saveSession({
+            ...current,
+            supabaseSession: {
+              accessToken: newSession.access_token,
+              refreshToken: newSession.refresh_token,
+            },
+          }).catch(() => {});
         }).catch(() => {});
       });
-    });
-  }
+    }
 
-  return session.user.id;
+    return session.user.id;
+  } catch (err) {
+    console.warn("[riderRealtimeAuth] restoreRiderRealtimeSession failed:", err);
+    return null;
+  }
 }

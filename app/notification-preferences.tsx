@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -98,44 +98,59 @@ export default function NotificationPreferencesScreen() {
     [token, prefs]
   );
 
+  // Synchronous guard against a fast double-tap on "Enable" firing two
+  // overlapping requestPermissionsAsync() calls — expo-notifications, like
+  // expo-location, can reject a second concurrent permission request. This
+  // whole body previously had no try/catch anywhere, so that rejection (or
+  // any other native-module failure) would have been an unhandled rejection.
+  const requestingPermissionRef = useRef(false);
+
   const requestPermission = useCallback(async () => {
-    if (!Notifications) return;
-    const existing = await Notifications.getPermissionsAsync();
+    if (!Notifications || requestingPermissionRef.current) return;
+    requestingPermissionRef.current = true;
+    try {
+      const existing = await Notifications.getPermissionsAsync();
 
-    // Once the OS has recorded a prior denial (e.g. the auto-prompt in
-    // _layout.tsx that fires right after login), it will never show the
-    // request dialog again — requestPermissionsAsync() just silently
-    // resolves with the same denied status, making this button look like
-    // it does nothing. canAskAgain tells us which case we're in.
-    if (existing.status !== "granted" && existing.canAskAgain === false) {
-      Alert.alert(
-        "Notifications disabled",
-        "Notifications for this app are turned off at the device level. Open Settings to enable them.",
-        [
-          { text: "Not now", style: "cancel" },
-          { text: "Open Settings", onPress: () => Linking.openSettings() },
-        ]
-      );
-      return;
-    }
+      // Once the OS has recorded a prior denial (e.g. the auto-prompt in
+      // _layout.tsx that fires right after login), it will never show the
+      // request dialog again — requestPermissionsAsync() just silently
+      // resolves with the same denied status, making this button look like
+      // it does nothing. canAskAgain tells us which case we're in.
+      if (existing.status !== "granted" && existing.canAskAgain === false) {
+        Alert.alert(
+          "Notifications disabled",
+          "Notifications for this app are turned off at the device level. Open Settings to enable them.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
+      }
 
-    let finalStatus = existing.status;
-    if (existing.status !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
+      let finalStatus = existing.status;
+      if (existing.status !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
 
-    if (finalStatus === "granted") {
-      setPermissionGranted(true);
-    } else {
-      Alert.alert(
-        "Notifications disabled",
-        "Enable notifications for this app in your device settings to receive order and update alerts.",
-        [
-          { text: "Not now", style: "cancel" },
-          { text: "Open Settings", onPress: () => Linking.openSettings() },
-        ]
-      );
+      if (finalStatus === "granted") {
+        setPermissionGranted(true);
+      } else {
+        Alert.alert(
+          "Notifications disabled",
+          "Enable notifications for this app in your device settings to receive order and update alerts.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("[notification-preferences] requestPermission failed:", err);
+      Alert.alert("Something went wrong", "Please try again.");
+    } finally {
+      requestingPermissionRef.current = false;
     }
   }, []);
 

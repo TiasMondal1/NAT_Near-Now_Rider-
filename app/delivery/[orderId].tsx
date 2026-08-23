@@ -381,15 +381,23 @@ export default function DeliveryScreen() {
     })();
 
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      locationSubRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
-        (loc) => {
-          setDriverLat(loc.coords.latitude);
-          setDriverLng(loc.coords.longitude);
-        }
-      );
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        locationSubRef.current = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
+          (loc) => {
+            setDriverLat(loc.coords.latitude);
+            setDriverLng(loc.coords.longitude);
+          }
+        );
+      } catch (err) {
+        // Non-fatal — the rider can still complete pickup/delivery via the
+        // pickup-code/OTP flow below without a live on-screen distance; this
+        // just means that one enhancement doesn't render, degrading
+        // gracefully instead of crashing the JS thread mid-delivery.
+        console.warn("[delivery] location watch failed:", err);
+      }
     })();
 
     return () => {
