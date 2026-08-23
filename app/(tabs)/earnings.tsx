@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -92,20 +92,26 @@ export default function EarningsScreen() {
     }, [token, fetchCompleted])
   );
 
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-  const todayOrders = orders.filter(
-    (o) => earningDate(o).toDateString() === todayStr
-  );
-  const weekOrders = orders.filter(
-    (o) => earningDate(o) >= weekAgo
-  );
-
-  const todayEarnings = todayOrders.reduce((sum, o) => sum + orderEarning(o), 0);
-  const weekEarnings = weekOrders.reduce((sum, o) => sum + orderEarning(o), 0);
-  const totalEarnings = orders.reduce((sum, o) => sum + orderEarning(o), 0);
+  // `orders` is deliberately unbounded (lifetime earnings need full
+  // completeness, unlike orders.tsx's capped ?limit=50) and can grow large
+  // for a long-tenured rider — these 5 buckets/sums previously re-scanned
+  // the whole array on every render, including re-renders caused by
+  // unrelated state (e.g. `refreshing` toggling). Memoized on `orders` so
+  // they only recompute when the underlying data actually changes.
+  const { todayOrders, weekOrders, todayEarnings, weekEarnings, totalEarnings } = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toDateString();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const todayOrders = orders.filter((o) => earningDate(o).toDateString() === todayStr);
+    const weekOrders = orders.filter((o) => earningDate(o) >= weekAgo);
+    return {
+      todayOrders,
+      weekOrders,
+      todayEarnings: todayOrders.reduce((sum, o) => sum + orderEarning(o), 0),
+      weekEarnings: weekOrders.reduce((sum, o) => sum + orderEarning(o), 0),
+      totalEarnings: orders.reduce((sum, o) => sum + orderEarning(o), 0),
+    };
+  }, [orders]);
 
   const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
   const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
@@ -114,8 +120,10 @@ export default function EarningsScreen() {
   // filteredEarnings but shouldn't count toward the average's divisor — doing
   // so silently drags "Avg ₹/delivery" down and could look like underpayment
   // for deliveries that simply predate payout tracking.
-  const payoutKnownOrders = filteredOrders.filter((o) => o.payout_amount != null);
-  const legacyOrderCount = filteredOrders.length - payoutKnownOrders.length;
+  const { payoutKnownOrders, legacyOrderCount } = useMemo(() => {
+    const payoutKnownOrders = filteredOrders.filter((o) => o.payout_amount != null);
+    return { payoutKnownOrders, legacyOrderCount: filteredOrders.length - payoutKnownOrders.length };
+  }, [filteredOrders]);
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
