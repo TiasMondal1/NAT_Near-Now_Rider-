@@ -121,7 +121,25 @@ export function useRiderVerificationGate(mode: GateMode) {
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState !== "active") return;
-      setChecking(true);
+      // Only show the blocking spinner (which unmounts the whole
+      // `(tabs)` tree, including home.tsx — see _layout.tsx's `checking ||
+      // !verified` guard) when we don't already have a confirmed verified
+      // state. Previously fired unconditionally on *every* foreground
+      // transition, including ones the app itself causes — e.g. the OS
+      // Settings round-trip for granting "Allow all the time" location
+      // permission backgrounds the app and immediately re-foregrounds it.
+      // That unmounted/remounted home.tsx mid-permission-request, letting
+      // its mount effect call Location.request*PermissionsAsync() a second
+      // time while the original call was still in flight — expo-location
+      // rejects the overlapping request ("Different authorization request
+      // is already in progress"), and with no try/catch anywhere in that
+      // chain it surfaced as a crash/refresh loop right after granting
+      // background location. evaluate() below still runs every time and
+      // still redirects immediately via its own router.replace if
+      // verification status genuinely changed — this only skips the extra
+      // blank-spinner interruption (and the unmount it causes) for the
+      // common case of re-confirming a rider who was already verified.
+      if (!verifiedRef.current) setChecking(true);
       void evaluateRef.current().finally(() => setChecking(false));
     };
     const sub = AppState.addEventListener("change", handleAppStateChange);

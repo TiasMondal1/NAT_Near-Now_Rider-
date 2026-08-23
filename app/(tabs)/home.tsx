@@ -245,22 +245,46 @@ export default function HomeScreen() {
     };
   }, [token, fetchUnreadCount]);
 
+  // Synchronous guard against overlapping calls — requestBackgroundPermissionsAsync
+  // routes to the OS Settings app on Android 11+, which backgrounds this app and
+  // fires an AppState 'active' event on return. That used to unmount/remount the
+  // whole (tabs) tree (see useRiderVerificationGate.ts's matching fix) and re-run
+  // this component's mount effect, which could call this function again while the
+  // original call was still awaiting the OS response — expo-location rejects a
+  // second concurrent permission request ("Different authorization request is
+  // already in progress"), and with no try/catch anywhere in this chain that
+  // surfaced as an unhandled-rejection crash right after granting "Allow all the
+  // time". State (not a ref) isn't used here since nothing needs to re-render off it.
+  const requestingLocationPermissionRef = useRef(false);
+
   const requestLocationPermissions = useCallback(async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Location permission is required.");
-      return;
+    if (requestingLocationPermissionRef.current) return;
+    requestingLocationPermissionRef.current = true;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Location permission is required.");
+        return;
+      }
+      // Requested only after foreground is already granted, and separately
+      // from it (Apple's guidance — asking for "Always" up front hurts grant
+      // rates). Denial isn't fatal: foreground tracking below still works
+      // while the app is open, this only unlocks tracking while backgrounded.
+      await Location.requestBackgroundPermissionsAsync();
+    } catch (err) {
+      console.warn("[home] requestLocationPermissions failed:", err);
+    } finally {
+      requestingLocationPermissionRef.current = false;
     }
-    // Requested only after foreground is already granted, and separately
-    // from it (Apple's guidance — asking for "Always" up front hurts grant
-    // rates). Denial isn't fatal: foreground tracking below still works
-    // while the app is open, this only unlocks tracking while backgrounded.
-    await Location.requestBackgroundPermissionsAsync();
   }, []);
 
-  const handleLocationModalContinue = useCallback(() => {
+  const handleLocationModalContinue = useCallback(async () => {
     setShowLocationPermissionModal(false);
-    AsyncStorage.setItem(LOCATION_PERMISSION_EXPLAINED_KEY, "1").catch(() => {});
+    // Awaited (previously fire-and-forget) — a remount racing this write
+    // (see the AppState fix above) could otherwise still read the flag as
+    // unset and show the in-app explanation modal again right after the
+    // rider already dismissed it and went through the OS dialog.
+    await AsyncStorage.setItem(LOCATION_PERMISSION_EXPLAINED_KEY, "1").catch(() => {});
     requestLocationPermissions();
   }, [requestLocationPermissions]);
 
