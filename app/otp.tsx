@@ -171,19 +171,45 @@ export default function OTPScreen() {
       if (flow === "new") {
         // Already fully registered → log them in instead of opening signup again
         if (res.token && isDeliveryPartner) {
-          const registered = await hasRegisteredRiderProfile(res.token);
+          // The OTP itself is already verified at this point (res.token was
+          // issued by the backend) — a failure in this registration-status
+          // check is a transient network/lookup problem, not proof the OTP
+          // was wrong. Previously any throw here (e.g. a blip in the
+          // profile fetch) fell through to the generic "Verification
+          // Failed" handler below, which is misleading once the OTP itself
+          // has already succeeded. Treat "couldn't check" as "assume not
+          // yet registered" and fall through to the signup branch below,
+          // rather than surfacing a false OTP-failure error.
+          let registered = false;
+          try {
+            registered = await hasRegisteredRiderProfile(res.token);
+          } catch (checkErr) {
+            console.warn("[otp] hasRegisteredRiderProfile check failed:", checkErr);
+          }
           if (registered) {
-            await saveSession({
-              token: res.token,
-              supabaseSession: toStoredSupabaseSession(res.supabaseSession),
-              user: {
-                ...res.user!,
-                role: "delivery_partner",
-              },
-              needsSignupCompletion: false,
-            });
-            router.replace(await resolveAuthenticatedRoute(res.token));
-            return;
+            try {
+              await saveSession({
+                token: res.token,
+                supabaseSession: toStoredSupabaseSession(res.supabaseSession),
+                user: {
+                  ...res.user!,
+                  role: "delivery_partner",
+                },
+                needsSignupCompletion: false,
+              });
+              router.replace(await resolveAuthenticatedRoute(res.token));
+              return;
+            } catch (routeErr) {
+              // Session is already saved by this point (or saveSession itself
+              // failed, in which case the session-restore on next app launch
+              // will retry) — a routing-resolution failure here means we
+              // genuinely don't know where to send them, but they ARE
+              // logged in. Land on a safe, always-reachable screen instead
+              // of reporting a fake OTP failure and clearing their code.
+              console.warn("[otp] post-login route resolution failed:", routeErr);
+              router.replace("/documents");
+              return;
+            }
           }
         }
 
@@ -221,7 +247,24 @@ export default function OTPScreen() {
         return;
       }
 
-      const registered = await hasRegisteredRiderProfile(res.token);
+      // The OTP is already verified at this point (res.token was issued by
+      // the backend for this exact phone+role) — only a *clean, successful*
+      // check that genuinely finds no profile should reject the login as
+      // "not registered". A THROWN error here (transient network/timeout)
+      // must not be treated the same way — that previously bounced a real,
+      // fully-registered rider to "Not registered, use New User
+      // Registration" (via the outer catch's generic error) purely because
+      // of a network blip, which is actively misleading given their OTP
+      // and account are both genuinely valid. On a throw, proceed with
+      // login instead — resolveAuthenticatedRoute below will correctly
+      // route them once real data is reachable, and falls back safely if
+      // it isn't.
+      let registered = true;
+      try {
+        registered = await hasRegisteredRiderProfile(res.token);
+      } catch (checkErr) {
+        console.warn("[otp] hasRegisteredRiderProfile check failed, proceeding with login:", checkErr);
+      }
       if (!registered) {
         await rejectUnregisteredExistingUser();
         return;
@@ -237,7 +280,21 @@ export default function OTPScreen() {
         needsSignupCompletion: false,
       });
       // Registered but unverified → pending-verification (docs). Verified → home.
-      router.replace(await resolveAuthenticatedRoute(res.token));
+      try {
+        router.replace(await resolveAuthenticatedRoute(res.token));
+      } catch (routeErr) {
+        // Session is already saved above — a routing-resolution failure
+        // here (e.g. the profile fetch inside checkRiderVerification
+        // timing out) means we genuinely don't know which screen to send
+        // them to, but they ARE logged in. Land on a safe, always-reachable
+        // screen instead of reporting a fake OTP/verification failure and
+        // clearing their code — this is the exact failure mode a real user
+        // reported (backend login succeeded per session_token_issued_at,
+        // but the app showed "Verification Failed").
+        console.warn("[otp] post-login route resolution failed:", routeErr);
+        router.replace("/documents");
+      }
+      return;
     } catch (err: unknown) {
       const error = err as { error?: string };
       Alert.alert(

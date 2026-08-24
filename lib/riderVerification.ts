@@ -60,6 +60,26 @@ export async function fetchRiderProfile(token: string): Promise<RiderVerificatio
   return res.profile ?? null;
 }
 
+/**
+ * Wraps fetchRiderProfile so a transient failure degrades to "no profile
+ * data yet" instead of throwing — mirrors the existing handling for
+ * fetchVerificationDocuments right below, and matters most right after
+ * login (see otp.tsx): a rider whose OTP was already correctly verified
+ * and session already saved should never see a scary "Verification
+ * Failed" error just because this one follow-up profile fetch hit a
+ * network blip. Worst case here is landing on documents/pending-
+ * verification instead of home for one check cycle — self-corrects on the
+ * next poll/focus recheck (useRiderVerificationGate) rather than blocking
+ * login outright.
+ */
+async function fetchRiderProfileSafe(token: string): Promise<RiderVerificationProfile | null> {
+  try {
+    return await fetchRiderProfile(token);
+  } catch {
+    return null;
+  }
+}
+
 export async function checkRiderVerification(token: string): Promise<{
   verified: boolean;
   status: RiderProfileStatus;
@@ -67,7 +87,7 @@ export async function checkRiderVerification(token: string): Promise<{
   documents: VerificationDocument[];
   documentsUploaded: boolean;
 }> {
-  const profile = await fetchRiderProfile(token);
+  const profile = await fetchRiderProfileSafe(token);
   let documents: VerificationDocument[] = [];
   try {
     documents = await fetchVerificationDocuments(token);
