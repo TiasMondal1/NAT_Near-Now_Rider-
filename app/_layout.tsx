@@ -95,7 +95,18 @@ export default function RootLayout() {
           });
         }
 
-        const tokenData = await Notifications!.getExpoPushTokenAsync();
+        // Explicit projectId, not just implicit auto-resolution — this app
+        // had no EAS project linked at all until 2026-08-25 (see
+        // app.config.js's easProjectId comment), so getExpoPushTokenAsync()
+        // with no args had nothing to resolve and silently failed for every
+        // install. Passing it explicitly here fails loudly/obviously (caught
+        // below) instead of depending on Constants auto-population working
+        // correctly in every build environment.
+        const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
+          ?.projectId;
+        const tokenData = await Notifications!.getExpoPushTokenAsync(
+          projectId ? { projectId } : undefined
+        );
         const session = await getSession();
         if (session?.token) {
           apiFetch(

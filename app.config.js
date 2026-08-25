@@ -7,6 +7,19 @@ module.exports = () => {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
     process.env.VITE_GOOGLE_MAPS_API_KEY ||
     "";
+  // No EAS project was ever linked for this app until 2026-08-25 (confirmed
+  // via `eas credentials -p android` reporting "EAS project not configured")
+  // — with no projectId anywhere, getExpoPushTokenAsync() (called with no
+  // args in app/_layout.tsx) had nothing to resolve, so push registration
+  // failed client-side before ever reaching the backend, for every install.
+  // Hardcoded fallback (not just env-sourced), same pattern as
+  // near-now-store_owner/app.config.js and nearandnowcustomerapp/app.config.js
+  // — EAS can't auto-write this into a dynamic (.js) config, and it
+  // shouldn't depend on a particular environment having the env var set.
+  const easProjectId =
+    process.env.EAS_PROJECT_ID ||
+    process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+    "bd2f649f-9fbb-474d-a874-0834afea48a9";
 
   return {
     expo: {
@@ -94,6 +107,9 @@ module.exports = () => {
           process.env.VITE_SUPABASE_ANON_KEY ||
           "",
         googleMapsApiKey,
+        eas: {
+          ...(easProjectId ? { projectId: easProjectId } : {}),
+        },
       },
     },
   };
