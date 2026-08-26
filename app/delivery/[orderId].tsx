@@ -225,7 +225,7 @@ function PickupStopCard({
 
       <View style={styles.stopItems}>
         <Text style={styles.stopItemsLabel}>Items to collect</Text>
-        {stop.items.map((item) => (
+        {(stop.items ?? []).map((item) => (
           <View key={item.id} style={styles.stopItemRow}>
             <Text style={styles.stopItemQty}>
               {item.quantity}{item.unit ? ` ${item.unit}` : ""}
@@ -375,7 +375,17 @@ export default function DeliveryScreen() {
   useEffect(() => {
     (async () => {
       const session = await getSession();
-      if (!session?.token) return;
+      if (!session?.token) {
+        // getSession() can transiently return null on a SecureStore read
+        // glitch even with a valid session cached elsewhere (by design, so
+        // the *next* caller retries) — without this, `loading` stays true
+        // forever since nothing else in this branch ever flips it, freezing
+        // this screen on its spinner with no recovery. Found 2026-08-26
+        // during a crash-risk audit; mirrors (tabs)/profile.tsx's handling
+        // of the same case.
+        setLoading(false);
+        return;
+      }
       setToken(session.token);
       await loadSequence(session.token);
     })();
@@ -559,18 +569,28 @@ export default function DeliveryScreen() {
                 Pickup Sequence — {order.total_stores} store{order.total_stores !== 1 ? "s" : ""}
               </Text>
 
-              {stops.map((stop, i) => (
-                <PickupStopCard
-                  key={stop.allocation_id}
-                  stop={stop}
-                  orderId={orderId!}
-                  token={token}
-                  isNext={!order.all_picked_up && i === nextIdx}
-                  onDone={() => loadSequence(token, true)}
-                  driverLat={driverLat}
-                  driverLng={driverLng}
-                />
-              ))}
+              {stops
+                // A store can be deleted/deactivated by an admin mid-delivery
+                // (a real possibility — see admin store-approval flow), which
+                // could leave the pickup-sequence API returning a stop with a
+                // null/partial `store`. PickupStopCard reads stop.store.name/
+                // address/latitude/phone directly with no guards, so one bad
+                // stop previously crashed the entire delivery screen — the
+                // worst possible moment, since the rider is mid-order. Found
+                // 2026-08-26 during a crash-risk audit.
+                .filter((stop) => stop.store)
+                .map((stop, i) => (
+                  <PickupStopCard
+                    key={stop.allocation_id}
+                    stop={stop}
+                    orderId={orderId!}
+                    token={token}
+                    isNext={!order.all_picked_up && i === nextIdx}
+                    onDone={() => loadSequence(token, true)}
+                    driverLat={driverLat}
+                    driverLng={driverLng}
+                  />
+                ))}
 
               {order.all_picked_up && (
                 <View style={styles.deliveryCard}>

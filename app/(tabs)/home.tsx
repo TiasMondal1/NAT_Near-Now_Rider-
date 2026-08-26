@@ -477,13 +477,28 @@ export default function HomeScreen() {
     }
 
     (async () => {
-      locationSub.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, distanceInterval: 50, timeInterval: 10000 },
-        (loc) => {
-          setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-          sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
-        }
-      );
+      try {
+        // A rider can flip "Go Online" without foreground location
+        // permission ever having been granted (dismissed the in-app modal,
+        // denied the OS prompt, or revoked it later in Settings) —
+        // watchPositionAsync throws when not authorized. This call was
+        // unguarded here even though the byte-for-byte identical call in
+        // app/delivery/[orderId].tsx was already fixed the same way after a
+        // real crash report. Found 2026-08-26 during a crash-risk audit.
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        locationSub.current = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 50, timeInterval: 10000 },
+          (loc) => {
+            setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+            sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
+          }
+        );
+      } catch (err) {
+        // Non-fatal — degrade gracefully (no live position sent) instead of
+        // crashing the JS thread while the rider is online.
+        console.warn("[home] location watch failed:", err);
+      }
     })();
 
     // Heartbeat: re-send last known position every 60 s so the dispatch system
@@ -975,8 +990,16 @@ export default function HomeScreen() {
           {isOnline && !activeOrder && visibleOffers.length > 0 && (
             <>
               {visibleOffers.map((offer) => {
-                const firstStore = offer.stores[0];
-                const lastStore = offer.stores[offer.stores.length - 1];
+                // A malformed/partial offer (e.g. a store deactivated after
+                // the offer was created but before it expired) previously
+                // crashed the whole Home screen — the one screen an online
+                // rider spends most of their shift on — since offer.stores
+                // was indexed/reduced/mapped with no guard against it being
+                // missing or containing a falsy entry. Found 2026-08-26
+                // during a crash-risk audit.
+                const stores = (offer.stores ?? []).filter(Boolean);
+                const firstStore = stores[0];
+                const lastStore = stores[stores.length - 1];
                 const d2store =
                   driverPos && firstStore
                     ? fmtDist(haversineKm(driverPos.lat, driverPos.lng, firstStore.latitude, firstStore.longitude))
@@ -985,7 +1008,7 @@ export default function HomeScreen() {
                   lastStore
                     ? fmtDist(haversineKm(lastStore.latitude, lastStore.longitude, offer.customer_lat, offer.customer_lng))
                     : null;
-                const totalItems = offer.stores.reduce((sum, s) => sum + (s.item_count ?? s.items?.length ?? 0), 0);
+                const totalItems = stores.reduce((sum, s) => sum + (s.item_count ?? s.items?.length ?? 0), 0);
 
                 return (
                   <View key={offer.offer_id} style={styles.offerCard}>
@@ -1027,7 +1050,7 @@ export default function HomeScreen() {
                     )}
 
                     <View style={styles.offerStoreList}>
-                      {offer.stores.map((s) => {
+                      {stores.map((s) => {
                         const dist = driverPos
                           ? fmtDist(haversineKm(driverPos.lat, driverPos.lng, s.latitude, s.longitude))
                           : null;

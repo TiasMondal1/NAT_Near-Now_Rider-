@@ -112,7 +112,16 @@ export default function OrdersScreen() {
   useEffect(() => {
     (async () => {
       const session = await getSession();
-      if (session?.token) setToken(session.token);
+      if (session?.token) {
+        setToken(session.token);
+      } else {
+        // getSession() can transiently return null on a SecureStore read
+        // glitch even with a valid session cached elsewhere — without this,
+        // `token` never gets set, fetchOrders() (the only place that flips
+        // `loading` to false) never runs, and this screen spins forever.
+        // Found 2026-08-26 during a crash-risk audit.
+        setLoading(false);
+      }
     })();
   }, []);
 

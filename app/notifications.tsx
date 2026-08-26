@@ -60,7 +60,15 @@ export default function NotificationsScreen() {
   useEffect(() => {
     (async () => {
       const session = await getSession();
-      if (!session?.token) return;
+      if (!session?.token) {
+        // getSession() can transiently return null on a SecureStore read
+        // glitch even with a valid session cached elsewhere — without this,
+        // fetchNotifications() (the only place that flips `loading` to
+        // false) never runs, and this screen spins forever. Found
+        // 2026-08-26 during a crash-risk audit.
+        setLoading(false);
+        return;
+      }
       setToken(session.token);
       fetchNotifications(session.token);
     })();

@@ -43,7 +43,15 @@ export default function NotificationPreferencesScreen() {
 
   const load = useCallback(async () => {
     const session = await getSession();
-    if (!session?.token) return;
+    if (!session?.token) {
+      // getSession() can transiently return null on a SecureStore read
+      // glitch even with a valid session cached elsewhere — without this,
+      // `loading` (only ever flipped false in the finally block below)
+      // stays true forever and this screen spins indefinitely. Found
+      // 2026-08-26 during a crash-risk audit.
+      setLoading(false);
+      return;
+    }
     setToken(session.token);
 
     if (Notifications) {
