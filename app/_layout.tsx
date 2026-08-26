@@ -124,7 +124,13 @@ export default function RootLayout() {
 
     responseListener.current = Notifications!.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, string>;
-      if (data?.orderId) {
+      // "new_order" (assignDeliveryAgent) means this order is already assigned
+      // to this rider, so it can be opened directly. "new_order_offer" carries
+      // multiple candidate orderIds still pending accept — no single order to
+      // deep-link to, so those (and anything else) just go to the offers list.
+      if (data?.type === "new_order" && data?.orderId) {
+        router.push({ pathname: "/delivery/[orderId]", params: { orderId: data.orderId } });
+      } else {
         router.push("/(tabs)/home");
       }
     });
