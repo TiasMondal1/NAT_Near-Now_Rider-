@@ -508,9 +508,11 @@ export default function DeliveryScreen() {
             {isCompleted ? "Delivered" : order.all_picked_up ? "Delivering" : `${doneCount}/${order.total_stores} stops done`}
           </Text>
         </View>
-        <View style={styles.amountBadge}>
-          <Text style={styles.amountText}>₹{order.total_amount}</Text>
-        </View>
+        {!isCompleted && (
+          <View style={styles.amountBadge}>
+            <Text style={styles.amountText}>₹{order.total_amount}</Text>
+          </View>
+        )}
       </View>
 
       {pollStale && !isCompleted && (
@@ -541,7 +543,6 @@ export default function DeliveryScreen() {
                 <MaterialCommunityIcons name="check-circle" size={52} color={Colors.success} />
               </View>
               <Text style={styles.completedTitle}>Order Delivered!</Text>
-              <Text style={styles.completedAmount}>₹{order.total_amount}</Text>
               <TouchableOpacity
                 style={styles.primaryBtn}
                 onPress={() => router.replace("/(tabs)/home")}
@@ -1005,5 +1006,4 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   completedTitle: { color: Colors.text, fontSize: 26, fontWeight: "800" },
-  completedAmount: { color: Colors.textSecondary, fontSize: 18 },
 });
