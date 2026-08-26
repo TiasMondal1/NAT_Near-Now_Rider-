@@ -125,13 +125,13 @@ export default function RootLayout() {
     responseListener.current = Notifications!.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, string>;
       // "new_order" (assignDeliveryAgent) means this order is already assigned
-      // to this rider, so it can be opened directly. "new_order_offer" carries
-      // multiple candidate orderIds still pending accept — no single order to
-      // deep-link to, so those (and anything else) just go to the offers list.
+      // to this rider, so it can be opened directly. Every other push type
+      // (new_order_offer, profile_change_reviewed, document_rejected,
+      // rider_approved) has no single order to deep-link to and previously
+      // did nothing on tap — preserved here so tapping one of those doesn't
+      // yank the rider off an active delivery screen they're mid-flow on.
       if (data?.type === "new_order" && data?.orderId) {
         router.push({ pathname: "/delivery/[orderId]", params: { orderId: data.orderId } });
-      } else {
-        router.push("/(tabs)/home");
       }
     });
 
