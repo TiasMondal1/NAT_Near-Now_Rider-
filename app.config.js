@@ -1,6 +1,18 @@
+const fs = require("fs");
+const path = require("path");
 const withAbiSplits = require("./plugins/withAbiSplits");
 const withReleaseBuild = require("./plugins/withReleaseBuild");
 const withTabletSupport = require("./plugins/withTabletSupport");
+
+// This app's android/ directory is gitignored (managed workflow — EAS Build
+// runs `expo prebuild` fresh from this config every time), so referencing a
+// googleServicesFile path that doesn't exist yet would make prebuild throw
+// ("Cannot copy google-services.json ... Ensure the source and destination
+// paths exist", @expo/config-plugins android/GoogleServices.js) and fail
+// every build, not just leave push notifications broken. Guard it so the
+// field only activates once the real file (from Firebase console — see
+// FCM_PUSH_NOTIFICATIONS_SETUP.md) is actually placed here.
+const hasGoogleServicesFile = fs.existsSync(path.join(__dirname, "google-services.json"));
 
 module.exports = () => {
   const googleMapsApiKey =
@@ -52,6 +64,13 @@ module.exports = () => {
         icon: "./Rider_Logo_nearNow.png",
         edgeToEdgeEnabled: true,
         package: "com.nearandnow.rider",
+        // Firebase Android config for this app (package com.nearandnow.rider)
+        // in the Firebase console — required for getExpoPushTokenAsync() to work
+        // on Android at all. Without it, FCM never initializes natively and push
+        // registration silently fails (token-failed) even though everything else
+        // looks configured. Only set once the file actually exists — see guard
+        // comment above.
+        ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
         versionCode: 4,
         config: {
           googleMaps: {

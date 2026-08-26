@@ -51,3 +51,5 @@ Thumbs.db
 /android
 
 .env.local
+# Firebase Android app config — contains project identifiers, not committed
+google-services.json
