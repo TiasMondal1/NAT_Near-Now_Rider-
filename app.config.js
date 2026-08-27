@@ -12,7 +12,18 @@ const withTabletSupport = require("./plugins/withTabletSupport");
 // every build, not just leave push notifications broken. Guard it so the
 // field only activates once the real file (from Firebase console — see
 // FCM_PUSH_NOTIFICATIONS_SETUP.md) is actually placed here.
-const hasGoogleServicesFile = fs.existsSync(path.join(__dirname, "google-services.json"));
+//
+// EAS Build only uploads git-tracked files, and this file is (deliberately)
+// gitignored — so a cloud build never sees the local copy even when one
+// sits in this folder. An EAS "file" environment variable
+// (GOOGLE_SERVICES_JSON) is EAS's documented answer: it's synced into the
+// build regardless of gitignore, and EAS points this env var at wherever it
+// placed the file on the build machine. Prefer that path; fall back to the
+// local file for local builds where no such env var exists. Same fix as
+// nearandnowcustomerapp/app.config.js.
+const googleServicesFilePath =
+  process.env.GOOGLE_SERVICES_JSON || path.join(__dirname, "google-services.json");
+const hasGoogleServicesFile = fs.existsSync(googleServicesFilePath);
 
 module.exports = () => {
   const googleMapsApiKey =
@@ -70,7 +81,10 @@ module.exports = () => {
         // registration silently fails (token-failed) even though everything else
         // looks configured. Only set once the file actually exists — see guard
         // comment above.
-        ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
+        // Use the resolved path directly (not a hardcoded relative string):
+        // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
+        // absolute path elsewhere on the build machine.
+        ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
         versionCode: 4,
         config: {
           googleMaps: {
