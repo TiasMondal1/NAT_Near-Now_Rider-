@@ -85,7 +85,7 @@ module.exports = () => {
         // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
         // absolute path elsewhere on the build machine.
         ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-        versionCode: 5,
+        versionCode: 6,
         config: {
           googleMaps: {
             apiKey: googleMapsApiKey,
