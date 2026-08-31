@@ -765,6 +765,14 @@ export default function HomeScreen() {
       } else if (err?.result === "driver_not_eligible") {
         Alert.alert("Can't accept", err?.error || "Go online to accept orders.");
         await fetchOffers();
+      } else if (err?.result === "order_not_available" || err?.result === "offer_not_found") {
+        // Order was cancelled (or the offer otherwise expired) after it was
+        // broadcast to this rider — driver_order_offers has no guaranteed
+        // cleanup on cancellation, so the card can still be sitting on
+        // screen. Refetch so it actually disappears instead of staying
+        // pinned as a permanently-unacceptable "available" order.
+        Alert.alert("Order unavailable", err?.error || "This order is no longer available.");
+        await fetchOffers();
       } else {
         Alert.alert("Error", "Failed to accept order. Please try again.");
       }
