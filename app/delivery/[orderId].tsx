@@ -310,6 +310,7 @@ export default function DeliveryScreen() {
   const [order, setOrder] = useState<ActiveOrder | null>(null);
   const [stops, setStops] = useState<StoreStop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [delivering, setDelivering] = useState(false);
   const [token, setToken] = useState("");
   const [deliveryOtp, setDeliveryOtp] = useState("");
@@ -342,6 +343,7 @@ export default function DeliveryScreen() {
         );
         setOrder(res.order);
         setStops(res.stops);
+        setLoadError(false);
         // Server-persisted verification survives an app relaunch, unlike the
         // local-only otpVerified state — hydrate from it once true so a
         // rider who already verified isn't asked to repeat the OTP.
@@ -356,6 +358,14 @@ export default function DeliveryScreen() {
         }
       } catch {
         if (!silent) {
+          // The initial (non-silent) load failing left `order` null forever
+          // with no way out but an OS-level back gesture — this screen's own
+          // render guard below (`loading || !order`) has no other branch.
+          // Every other screen in this app with the same shape (earnings,
+          // notifications) has a "Couldn't load — Try Again" state for
+          // exactly this; this one didn't. Found 2026-09-01 during a
+          // cross-app audit.
+          setLoadError(true);
           Alert.alert("Error", "Failed to load order.");
         } else {
           // Background polls fail silently by design, but 2+ in a row means the
@@ -493,6 +503,22 @@ export default function DeliveryScreen() {
   // is already false (cache warm) but the cached result itself says
   // not-yet-verified — see useRiderVerificationGate's own AppState handling
   // for the broader "went stale while backgrounded" case.
+  if (!loading && loadError && !order) {
+    return (
+      <View style={styles.centered}>
+        <MaterialCommunityIcons name="wifi-alert" size={40} color={Colors.accent} />
+        <Text style={styles.loadErrorText}>Couldn&apos;t load this order</Text>
+        <Text style={styles.loadErrorSub}>Check your connection and try again.</Text>
+        <TouchableOpacity
+          style={styles.loadErrorRetryBtn}
+          onPress={() => { setLoadError(false); setLoading(true); loadSequence(token); }}
+        >
+          <Text style={styles.loadErrorRetryText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (verificationChecking || !verificationVerified || loading || !order) {
     return (
       <View style={styles.centered}>
@@ -717,6 +743,10 @@ const styles = StyleSheet.create({
   responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
   safe: { flex: 1, backgroundColor: Colors.bg },
   centered: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
+  loadErrorText: { fontSize: 16, fontWeight: "700", color: Colors.text, marginTop: 12 },
+  loadErrorSub: { fontSize: 13, color: Colors.textMuted, marginTop: 4, textAlign: "center", paddingHorizontal: 32 },
+  loadErrorRetryBtn: { marginTop: 20, backgroundColor: Colors.accent, borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 24 },
+  loadErrorRetryText: { color: Colors.accentText, fontWeight: "700", fontSize: 14 },
 
   topBar: {
     flexDirection: "row",
