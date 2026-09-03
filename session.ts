@@ -135,13 +135,26 @@ export async function saveSession(session: Omit<UserSession, "expiresAt"> & { ex
   // (user id/name/role, expiry, signup flags) is non-sensitive and stays in
   // AsyncStorage.
   const { token, supabaseSession, ...rest } = withExpiry;
-  await Promise.all([
-    SecureStore.setItemAsync(TOKEN_KEY, token),
-    supabaseSession
-      ? SecureStore.setItemAsync(SUPABASE_SESSION_KEY, JSON.stringify(supabaseSession))
-      : SecureStore.deleteItemAsync(SUPABASE_SESSION_KEY).catch(() => {}),
-    AsyncStorage.setItem(SESSION_KEY, JSON.stringify(rest)),
-  ]);
+  // `_cache` is already set above, so this rider is logged in for the rest
+  // of this JS runtime session regardless of what happens below. A
+  // transient SecureStore/AsyncStorage write failure here must not throw
+  // back up into otp.tsx's catch block — that would show a false
+  // "Verification Failed" to a rider whose OTP the backend already
+  // accepted (same bug class fixed 2026-08-24 in the customer/store-owner
+  // apps' equivalent saveSession, at the profile-check/route-resolution
+  // layer rather than this storage-write layer).
+  try {
+    await Promise.all([
+      SecureStore.setItemAsync(TOKEN_KEY, token),
+      supabaseSession
+        ? SecureStore.setItemAsync(SUPABASE_SESSION_KEY, JSON.stringify(supabaseSession))
+        : SecureStore.deleteItemAsync(SUPABASE_SESSION_KEY).catch(() => {}),
+      AsyncStorage.setItem(SESSION_KEY, JSON.stringify(rest)),
+    ]);
+  } catch {
+    // Best-effort persistence — the in-memory session above still lets
+    // this app session proceed as logged in.
+  }
 }
 
 export async function clearSession() {
