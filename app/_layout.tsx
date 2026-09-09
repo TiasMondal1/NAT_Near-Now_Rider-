@@ -194,7 +194,7 @@ export default function RootLayout() {
   // Mounted once above the whole Stack (not inside a single screen) so a
   // profile-change outcome is surfaced no matter which tab/screen the rider
   // happens to be on when the admin reviews it.
-  const { outcome, dismiss } = useProfileChangeOutcomeGate();
+  const { outcome, dismiss } = useProfileChangeOutcomeGate(isLoggedIn);
 
   return (
     <ErrorBoundary>

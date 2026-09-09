@@ -266,7 +266,14 @@ export default function EarningsScreen() {
               </View>
               <View style={styles.cardDateRow}>
                 <MaterialCommunityIcons name="clock-outline" size={12} color={Colors.textMuted} />
-                <Text style={styles.date}>{formatDate(item.placed_at)}</Text>
+                {/* Was formatDate(item.placed_at) — showed the order's placement date
+                    while Today/Week bucketing and totals above key off earningDate()
+                    (payout_created_at, falling back to placed_at only for legacy
+                    orders with no payout row). A delivery paid out today but placed
+                    days earlier was correctly counted in "Today's Earnings" yet
+                    showed the older placement date here — confusing, not a math bug.
+                    Found 2026-09-09. */}
+                <Text style={styles.date}>{formatDate(earningDate(item).toISOString())}</Text>
               </View>
             </View>
           </Animated.View>

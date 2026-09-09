@@ -27,6 +27,7 @@ import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
 import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
+import { fetchUnreadNotificationsShared } from "../../lib/unreadNotificationsCache";
 import LocationPermissionModal from "../../components/LocationPermissionModal";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
@@ -215,11 +216,11 @@ export default function HomeScreen() {
   const fetchUnreadCount = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiFetch<{ is_read: boolean }[]>(
-        "/delivery-partner/notifications?unreadOnly=true",
-        {},
-        token
-      );
+      // Shared with useProfileChangeOutcomeGate.ts's own poll of the same
+      // endpoint (short-TTL de-duped cache — see unreadNotificationsCache.ts)
+      // so this tab's 30s badge poll and that root-layout 20s poll don't both
+      // hit the backend independently when their ticks land close together.
+      const data = await fetchUnreadNotificationsShared(token);
       setUnreadNotifications(Array.isArray(data) ? data.length : 0);
     } catch {
       // Non-critical — leave the badge count as-is on failure
@@ -623,6 +624,17 @@ export default function HomeScreen() {
       return () => clearInterval(activeOrderInterval);
     }
 
+    // Offer cards only ever render while `!activeOrder` (see visibleOffers
+    // usages below) — polling/subscribing for offers during an active
+    // delivery burns battery/network on data that can never display, right
+    // when GPS tracking is already running hardest.
+    if (activeOrder) {
+      setOffers([]);
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+      return () => clearInterval(activeOrderInterval);
+    }
+
     fetchOffers();
     // 15s fallback poll — Realtime subscription handles instant delivery.
     pollRef.current = setInterval(fetchOffers, 15000);
@@ -631,12 +643,12 @@ export default function HomeScreen() {
       clearInterval(activeOrderInterval);
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [isOnline, token, fetchOffers, fetchActiveOrder]);
+  }, [isOnline, token, fetchOffers, fetchActiveOrder, activeOrder]);
 
   // Realtime subscription: fire fetchOffers the instant a new offer row lands
   // in driver_order_offers for this driver — no waiting for the next poll cycle.
   useEffect(() => {
-    if (!isOnline || !token) {
+    if (!isOnline || !token || activeOrder) {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
       return;
@@ -697,7 +709,7 @@ export default function HomeScreen() {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
     };
-  }, [isOnline, token, fetchOffers]);
+  }, [isOnline, token, fetchOffers, activeOrder]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -707,6 +719,21 @@ export default function HomeScreen() {
 
   const handleToggle = async (value: boolean) => {
     if (toggling || !canGoOnline) return;
+    // Going offline mid-delivery used to silently tear down GPS tracking (the
+    // foreground watchPositionAsync effect and the background TaskManager task
+    // are both keyed on isOnline alone) — freezing the customer's live tracking
+    // map for the rest of a real, still-active delivery with zero warning.
+    // Block it here instead: a rider can still stop receiving new offers by
+    // completing the current delivery first, same as every other "closed for
+    // business" gate in this app.
+    if (!value && activeOrder) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        "Active Delivery in Progress",
+        "You can't go offline while you have an active delivery — this would stop your live location from reaching the customer. Complete or hand off this delivery first."
+      );
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsOnline(value);
     setToggling(true);

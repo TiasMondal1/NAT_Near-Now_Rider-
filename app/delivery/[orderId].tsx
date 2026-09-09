@@ -328,7 +328,6 @@ export default function DeliveryScreen() {
   const [pollStale, setPollStale] = useState(false);
   const consecutivePollFailuresRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const locationSubRef = useRef<Location.LocationSubscription | null>(null);
   const slideAnim = useRef(new Animated.Value(30)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -382,6 +381,22 @@ export default function DeliveryScreen() {
     [orderId, slideAnim, fadeAnim]
   );
 
+  const refreshLocation = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setDriverLat(loc.coords.latitude);
+      setDriverLng(loc.coords.longitude);
+    } catch (err) {
+      // Non-fatal — the rider can still complete pickup/delivery via the
+      // pickup-code/OTP flow below without a live on-screen distance; this
+      // just means that one enhancement doesn't render, degrading
+      // gracefully instead of crashing the JS thread mid-delivery.
+      console.warn("[delivery] location fetch failed:", err);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       const session = await getSession();
@@ -400,48 +415,38 @@ export default function DeliveryScreen() {
       await loadSequence(session.token);
     })();
 
-    (async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") return;
-        locationSubRef.current = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, distanceInterval: 30, timeInterval: 10000 },
-          (loc) => {
-            setDriverLat(loc.coords.latitude);
-            setDriverLng(loc.coords.longitude);
-          }
-        );
-      } catch (err) {
-        // Non-fatal — the rider can still complete pickup/delivery via the
-        // pickup-code/OTP flow below without a live on-screen distance; this
-        // just means that one enhancement doesn't render, degrading
-        // gracefully instead of crashing the JS thread mid-delivery.
-        console.warn("[delivery] location watch failed:", err);
-      }
-    })();
+    // A continuous Location.watchPositionAsync subscription used to run here,
+    // alongside (tabs)/home.tsx's own continuous watcher — home.tsx's screen
+    // typically stays mounted underneath this pushed route (standard Expo
+    // Router stack behavior), so two concurrent OS-level GPS subscriptions
+    // doubled location-hardware/battery draw for the whole delivery. This
+    // screen only ever used the position for on-screen distance badges (the
+    // real backend-facing tracking POST is home.tsx's watcher), so it's been
+    // replaced with a one-off read here plus a periodic read piggybacked on
+    // the poll interval below — no second continuous subscription needed.
+    refreshLocation();
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
-      locationSubRef.current?.remove();
     };
-  }, [loadSequence]);
+  }, [loadSequence, refreshLocation]);
 
   useEffect(() => {
     if (!token) return;
-    pollRef.current = setInterval(() => loadSequence(token, true), 10000);
+    pollRef.current = setInterval(() => {
+      loadSequence(token, true);
+      refreshLocation();
+    }, 10000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [token, loadSequence]);
+  }, [token, loadSequence, refreshLocation]);
 
-  // Once the order is delivered, the 10s pickup-sequence poll and the
-  // foreground GPS watcher above have nothing left to do — a rider lingering
-  // on the "Order Delivered!" screen would otherwise keep polling and
-  // streaming location indefinitely for no functional reason.
+  // Once the order is delivered, the 10s pickup-sequence poll above has
+  // nothing left to do — a rider lingering on the "Order Delivered!" screen
+  // would otherwise keep polling indefinitely for no functional reason.
   const isDeliveryComplete = order?.status === "order_delivered" || order?.status === "completed";
   useEffect(() => {
     if (!isDeliveryComplete) return;
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    locationSubRef.current?.remove();
-    locationSubRef.current = null;
   }, [isDeliveryComplete]);
 
   const markDelivered = async () => {
