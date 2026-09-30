@@ -15,6 +15,7 @@ import ProfileChangeOutcomeModal from "../components/ProfileChangeOutcomeModal";
 // module load, before any component mounts. Required so a location update
 // that relaunches the app after it was killed still has a task definition
 // to run against — defining it lazily inside a screen would be too late.
+import { stopBackgroundLocationTracking } from "../lib/backgroundLocationTask";
 import "../lib/backgroundLocationTask";
 
 // expo-notifications is unsupported in Expo Go (SDK 53+); skip in that environment
@@ -50,10 +51,15 @@ export default function RootLayout() {
     validateConfig();
   }, []);
 
-  // Register session-expired handler so api.ts can trigger logout
+  // Register session-expired handler so api.ts can trigger logout. Also stops
+  // the background GPS task here: home.tsx's own cleanup only runs while it's
+  // mounted, but a 401 can arrive (and unmount it) from any screen, and would
+  // otherwise leave the foreground-service location task running for a rider
+  // who's no longer authenticated. See bug_fixes doc, 2026-10-01.
   useEffect(() => {
     setSessionExpiredHandler(() => {
       setIsLoggedIn(false);
+      stopBackgroundLocationTracking().catch(() => {});
     });
   }, []);
 
@@ -62,8 +68,14 @@ export default function RootLayout() {
     (async () => {
       const session = await getSession();
       if (!mounted) return;
-      setIsLoggedIn(Boolean(session?.token));
+      const loggedIn = Boolean(session?.token);
+      setIsLoggedIn(loggedIn);
       setAuthReady(true);
+      // Cold start with no valid session (expired while killed, or a previous
+      // install/session left the OS-level task registered) — the task would
+      // otherwise only be noticed and stopped once a screen that imports it
+      // mounts, which never happens on the logged-out path.
+      if (!loggedIn) stopBackgroundLocationTracking().catch(() => {});
     })();
     return () => { mounted = false; };
   }, []);
