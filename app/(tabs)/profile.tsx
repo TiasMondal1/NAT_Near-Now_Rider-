@@ -57,6 +57,11 @@ export default function ProfileScreen() {
   const [loadError, setLoadError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Synchronous double-tap guard — `saving` state alone doesn't take effect
+  // until the next render commits, same class of fix as billing-info.tsx's
+  // savingRef / home.tsx's acceptingRef. Found 2026-10-01 (bug_fixes doc,
+  // finding D1).
+  const savingRef = useRef(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [token, setToken] = useState("");
 
@@ -227,6 +232,17 @@ export default function ProfileScreen() {
   };
 
   const handleSave = async () => {
+    if (savingRef.current) return;
+    const trimmedEmail = email.trim();
+    // Same regex already used in signup.tsx — no validation existed here before,
+    // unlike billing-info.tsx's UPI regex or documents.tsx's per-doc-type checks,
+    // so a malformed email could land in the admin review queue. Found 2026-10-01
+    // (bug_fixes doc, finding D2).
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      Alert.alert("Invalid email", "Please enter a valid email address.");
+      return;
+    }
+    savingRef.current = true;
     setSaving(true);
     try {
       const session = await getSession();
@@ -238,7 +254,7 @@ export default function ProfileScreen() {
       const patch: Record<string, string> = {};
       const trimmedName = name.trim() || "Delivery Partner";
       if (trimmedName !== (profile?.name ?? "")) patch.name = trimmedName;
-      if (email.trim() !== (profile?.email ?? "")) patch.email = email.trim();
+      if (trimmedEmail !== (profile?.email ?? "")) patch.email = trimmedEmail;
       if (address.trim() !== (profile?.address ?? "")) patch.address = address.trim();
 
       // A genuinely-untouched form only needs a local bail. But if every
@@ -287,8 +303,14 @@ export default function ProfileScreen() {
       }
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to save profile.");
+    } finally {
+      // Was a bare statement after the try/catch (not a finally) — every early
+      // `return` inside the try block above (session expired, no changes to
+      // save) skipped it entirely, leaving `saving`/`savingRef` stuck `true`
+      // forever. Found alongside D1 while adding the double-tap guard.
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleLogout = () => {
