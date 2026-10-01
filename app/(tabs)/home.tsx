@@ -66,8 +66,6 @@ type Offer = {
   delivery_address: string;
   customer_lat: number;
   customer_lng: number;
-  customer_name?: string | null;
-  customer_phone?: string | null;
   placed_at: string;
   store_count: number;
   stores: OfferStore[];
@@ -1131,23 +1129,12 @@ export default function HomeScreen() {
                       <MaterialCommunityIcons name="map-marker" size={14} color={Colors.danger} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.offerDropAddr} numberOfLines={2}>{offer.delivery_address}</Text>
-                        {(offer.customer_name || offer.customer_phone) && (
-                          <View style={styles.offerCustomerRow}>
-                            {offer.customer_name && (
-                              <Text style={styles.offerCustomerName}>{offer.customer_name}</Text>
-                            )}
-                            {offer.customer_phone && (
-                              <TouchableOpacity
-                                style={styles.offerStoreCallBtn}
-                                onPress={() => Linking.openURL(`tel:${offer.customer_phone}`)}
-                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                              >
-                                <MaterialCommunityIcons name="phone" size={11} color={Colors.accent} />
-                                <Text style={styles.offerStoreCallText}>{offer.customer_phone}</Text>
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                        )}
+                        {/* Customer name/phone deliberately not shown here — this is a
+                            not-yet-accepted offer. The backend stopped sending them for
+                            exactly this reason (any online rider could browse every pending
+                            offer and see/call the customer before committing to deliver);
+                            they're shown on the active-delivery screen instead, once
+                            accepted. Found 2026-10-01 (bug_fixes doc, item 7). */}
                       </View>
                     </View>
 
@@ -1411,8 +1398,6 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
   },
   offerDropAddr: { color: Colors.textSecondary, fontSize: 13, flex: 1 },
-  offerCustomerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 4 },
-  offerCustomerName: { color: Colors.text, fontSize: 12, fontWeight: "600" },
   offerActionRow: {
     flexDirection: "row",
     gap: 10,
