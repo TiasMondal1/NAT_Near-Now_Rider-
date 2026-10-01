@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -17,6 +16,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius } from "../constants/theme";
 import { apiFetch } from "../constants/api";
 import { getSession } from "../session";
+import { openAppSettings } from "../lib/openLink";
 
 // Same conditional-require pattern as _layout.tsx: expo-notifications is
 // unsupported in Expo Go (SDK 53+) and must never be statically imported.
@@ -65,7 +65,12 @@ export default function NotificationPreferencesScreen() {
         {},
         session.token
       );
-      if (data.success) setPrefs({ ...DEFAULT_PREFERENCES, ...data.preferences });
+      if (data.success) {
+        const loaded = { ...DEFAULT_PREFERENCES, ...data.preferences };
+        savedPrefsRef.current = loaded;
+        desiredPrefsRef.current = loaded;
+        setPrefs(loaded);
+      }
     } catch {
       // keep defaults — mobile still lets the rider set preferences locally
     } finally {
@@ -89,21 +94,48 @@ export default function NotificationPreferencesScreen() {
     }, [])
   );
 
+  // Saves are serialized, latest-wins. Each save POSTs the *whole* preferences
+  // object, and toggles used to fire overlapping requests: toggle A then B,
+  // and if A's request reached the server last it overwrote B server-side.
+  // Each failure also restored its own pre-toggle snapshot, which could undo
+  // the other toggle on screen. Now only one save is in flight; when it
+  // finishes, the latest wanted state is sent if it changed; and a failure
+  // reverts the screen to what the server last confirmed. (Audit D3, fixed
+  // 2026-10-02.)
+  const savedPrefsRef = useRef<Preferences>(DEFAULT_PREFERENCES);
+  const desiredPrefsRef = useRef<Preferences>(DEFAULT_PREFERENCES);
+  const savingPrefsRef = useRef(false);
+
+  const flushPrefs = useCallback(async (authToken: string) => {
+    if (savingPrefsRef.current) return;
+    savingPrefsRef.current = true;
+    try {
+      while (desiredPrefsRef.current !== savedPrefsRef.current) {
+        const sending = desiredPrefsRef.current;
+        try {
+          await apiFetch("/delivery-partner/notifications/preferences", { method: "POST", body: sending }, authToken);
+          savedPrefsRef.current = sending;
+        } catch {
+          desiredPrefsRef.current = savedPrefsRef.current;
+          setPrefs(savedPrefsRef.current);
+          Alert.alert("Couldn't save preference", "Please check your connection and try again.");
+          return;
+        }
+      }
+    } finally {
+      savingPrefsRef.current = false;
+    }
+  }, []);
+
   const toggle = useCallback(
     (key: keyof Preferences) => {
       if (!token) return;
-      // Snapshot before flipping so a failed save can revert the switch
-      // instead of silently leaving it showing a preference that was never
-      // actually persisted server-side.
-      const previous = prefs;
-      const next = { ...prefs, [key]: !prefs[key] };
+      const next = { ...desiredPrefsRef.current, [key]: !desiredPrefsRef.current[key] };
+      desiredPrefsRef.current = next;
       setPrefs(next);
-      apiFetch("/delivery-partner/notifications/preferences", { method: "POST", body: next }, token).catch(() => {
-        setPrefs(previous);
-        Alert.alert("Couldn't save preference", "Please check your connection and try again.");
-      });
+      flushPrefs(token);
     },
-    [token, prefs]
+    [token, flushPrefs]
   );
 
   // Synchronous guard against a fast double-tap on "Enable" firing two
@@ -130,7 +162,7 @@ export default function NotificationPreferencesScreen() {
           "Notifications for this app are turned off at the device level. Open Settings to enable them.",
           [
             { text: "Not now", style: "cancel" },
-            { text: "Open Settings", onPress: () => Linking.openSettings() },
+            { text: "Open Settings", onPress: openAppSettings },
           ]
         );
         return;
@@ -150,7 +182,7 @@ export default function NotificationPreferencesScreen() {
           "Enable notifications for this app in your device settings to receive order and update alerts.",
           [
             { text: "Not now", style: "cancel" },
-            { text: "Open Settings", onPress: () => Linking.openSettings() },
+            { text: "Open Settings", onPress: openAppSettings },
           ]
         );
       }

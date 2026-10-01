@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,6 +21,7 @@ import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey }
 import { fetchBillingInfo } from "../lib/billingInfo";
 import { ADMIN_CONTACTS, formatPhoneForDisplay, SUPABASE_CONFIG } from "../constants/config";
 import VerificationNavBar from "../components/VerificationNavBar";
+import { callNumber } from "../lib/openLink";
 
 // A dedicated client, NOT the shared one from lib/supabase.ts (which
 // lib/storage.ts's uploadRiderImage() also uses for plain anon-key photo
@@ -382,7 +382,7 @@ export default function PendingVerificationScreen() {
               <TouchableOpacity
                 key={admin.phone}
                 style={styles.adminRow}
-                onPress={() => Linking.openURL(`tel:${admin.phone}`)}
+                onPress={() => callNumber(admin.phone)}
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1 }}>

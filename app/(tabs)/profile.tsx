@@ -192,7 +192,25 @@ export default function ProfileScreen() {
   // pattern as the shopkeeper app's lib/storage.ts) instead of the old
   // PATCH /delivery-partner/profile-image base64-to-backend flow — the
   // backend only stores the resulting public URL now.
+  // Synchronous re-entry guard (audit D5, 2026-10-02). A fast double tap ran
+  // this twice before the photo library opened; expo-image-picker rejects a
+  // second concurrent picker, and nothing here caught it (unhandled
+  // rejection). The guard stops the second run; the catch covers any other
+  // permission/picker failure.
+  const pickingImageRef = useRef(false);
   const handlePickImage = async () => {
+    if (pickingImageRef.current) return;
+    pickingImageRef.current = true;
+    try {
+      await pickImageAndUpload();
+    } catch {
+      Alert.alert("Couldn't open your photos", "Please try again.");
+    } finally {
+      pickingImageRef.current = false;
+    }
+  };
+
+  const pickImageAndUpload = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permission needed", "Allow photo library access to change your profile picture.");

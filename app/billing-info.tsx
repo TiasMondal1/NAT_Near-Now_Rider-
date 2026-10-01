@@ -124,7 +124,25 @@ export default function BillingInfoScreen() {
     }, [])
   );
 
+  // Synchronous re-entry guard (audit D5, 2026-10-02). A fast double tap ran
+  // this twice before the photo library opened; expo-image-picker rejects a
+  // second concurrent picker, and nothing here caught it (unhandled
+  // rejection). The guard stops the second run; the catch covers any other
+  // permission/picker failure.
+  const pickingImageRef = useRef(false);
   const pickProfileImage = async () => {
+    if (pickingImageRef.current) return;
+    pickingImageRef.current = true;
+    try {
+      await pickProfileImageAndUpload();
+    } catch {
+      Alert.alert("Couldn't open your photos", "Please try again.");
+    } finally {
+      pickingImageRef.current = false;
+    }
+  };
+
+  const pickProfileImageAndUpload = async () => {
     if (profileImageUrl) return; // already set — read-only from here on
     if (!token) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();

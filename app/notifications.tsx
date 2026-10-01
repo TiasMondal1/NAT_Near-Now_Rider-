@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -81,34 +81,48 @@ export default function NotificationsScreen() {
     setRefreshing(false);
   }, [token, fetchNotifications]);
 
+  // Ids the server has confirmed as read. A failed action rolls back only the
+  // items *it* changed, and never one the server already confirmed. Restoring
+  // a whole-list snapshot (as before) let one failure undo another action's
+  // success: mark X read (succeeds), mark-all fails → the pre-mark-all snapshot
+  // flipped X back to unread although the server had it read. (Audit D3,
+  // fixed 2026-10-02.)
+  const confirmedReadRef = useRef(new Set<string>());
+  const revertToUnread = useCallback((ids: string[]) => {
+    const revert = new Set(ids.filter((id) => !confirmedReadRef.current.has(id)));
+    if (revert.size) setNotifications((prev) => prev.map((n) => (revert.has(n.id) ? { ...n, is_read: false } : n)));
+  }, []);
+
   const markAllRead = useCallback(async () => {
     if (!token) return;
-    // Snapshot before the optimistic update so a failed PUT can be reverted
-    // instead of leaving this screen permanently out of sync with the real
-    // server state (e.g. Home's bell badge, which always refetches fresh).
-    const previous = notifications;
+    const changed = notifications.filter((n) => !n.is_read).map((n) => n.id);
+    if (!changed.length) return;
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     try {
       await apiFetch("/delivery-partner/notifications/read-all", { method: "PUT" }, token);
+      changed.forEach((id) => confirmedReadRef.current.add(id));
     } catch {
-      setNotifications(previous);
+      revertToUnread(changed);
       Alert.alert("Couldn't mark all as read", "Please check your connection and try again.");
     }
-  }, [token, notifications]);
+  }, [token, notifications, revertToUnread]);
 
   const markOneRead = useCallback(
     async (id: string) => {
       if (!token) return;
-      const previous = notifications;
+      // Already read: nothing to send (opening a read notification used to
+      // re-PUT it every time).
+      if (!notifications.some((n) => n.id === id && !n.is_read)) return;
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
       try {
         await apiFetch(`/delivery-partner/notifications/${id}/read`, { method: "PUT" }, token);
+        confirmedReadRef.current.add(id);
       } catch {
-        setNotifications(previous);
+        revertToUnread([id]);
         Alert.alert("Couldn't mark as read", "Please check your connection and try again.");
       }
     },
-    [token, notifications]
+    [token, notifications, revertToUnread]
   );
 
   const openNotification = useCallback(

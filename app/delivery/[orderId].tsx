@@ -6,8 +6,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Linking,
-  Platform,
   Animated,
   ScrollView,
   TextInput,
@@ -22,6 +20,7 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constant
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { useRiderVerificationGate } from "../../lib/useRiderVerificationGate";
+import { callNumber, openNavigation } from "../../lib/openLink";
 
 function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
   const R = 6371, r = (d: number) => (d * Math.PI) / 180;
@@ -155,15 +154,11 @@ function PickupStopCard({
 
   const openNav = () => {
     const { latitude, longitude } = stop.store;
-    const scheme = Platform.select({
-      ios: `maps:0,0?q=@${latitude},${longitude}`,
-      android: `google.navigation:q=${latitude},${longitude}`,
-    });
-    if (scheme) Linking.openURL(scheme);
+    openNavigation(latitude, longitude);
   };
 
   const callStore = () => {
-    if (stop.store.phone) Linking.openURL(`tel:${stop.store.phone}`);
+    if (stop.store.phone) callNumber(stop.store.phone);
   };
 
   const done = stop.picked_up;
@@ -497,11 +492,7 @@ export default function DeliveryScreen() {
 
   const openCustomerNav = () => {
     if (!order) return;
-    const scheme = Platform.select({
-      ios: `maps:0,0?q=@${order.customer_lat},${order.customer_lng}`,
-      android: `google.navigation:q=${order.customer_lat},${order.customer_lng}`,
-    });
-    if (scheme) Linking.openURL(scheme);
+    openNavigation(order.customer_lat, order.customer_lng);
   };
 
   // !verificationVerified closes the narrower gap where verificationChecking

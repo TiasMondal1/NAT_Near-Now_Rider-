@@ -11,7 +11,6 @@ import {
   ScrollView,
   RefreshControl,
   AppState,
-  Linking,
   type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -29,6 +28,7 @@ import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from 
 import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
 import { fetchUnreadNotificationsShared } from "../../lib/unreadNotificationsCache";
 import LocationPermissionModal from "../../components/LocationPermissionModal";
+import { callNumber } from "../../lib/openLink";
 
 const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
@@ -971,7 +971,7 @@ export default function HomeScreen() {
                         <TouchableOpacity
                           key={admin.phone}
                           style={[styles.adminContactBtn, { marginTop: 0 }]}
-                          onPress={() => Linking.openURL(`tel:${admin.phone}`)}
+                          onPress={() => callNumber(admin.phone)}
                           activeOpacity={0.7}
                         >
                           <MaterialCommunityIcons name="phone" size={14} color={Colors.accent} />
@@ -1105,7 +1105,7 @@ export default function HomeScreen() {
                                 {s.phone && (
                                   <TouchableOpacity
                                     style={styles.offerStoreCallBtn}
-                                    onPress={() => Linking.openURL(`tel:${s.phone}`)}
+                                    onPress={() => { if (s.phone) callNumber(s.phone); }}
                                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                                   >
                                     <MaterialCommunityIcons name="phone" size={11} color={Colors.accent} />
