@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+import { ORDERS_PAGE_SIZE, appendPage, mergeFirstPage } from "../../lib/orderPaging";
 
 type Order = {
   id: string;
@@ -98,6 +99,19 @@ export default function OrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [token, setToken] = useState("");
+  // Paging (2026-10-02): the list used to stop at the newest 50 with no way
+  // to reach older deliveries, although the server reports has_more.
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
+  const ordersRef = useRef<Order[]>([]);
+  ordersRef.current = orders;
+  // Bumped by every first-page load (tab change, focus, pull-to-refresh). A
+  // response — first page or older page — from an earlier generation is
+  // dropped, so a slow request can't overwrite a newer list or append a
+  // page from the other tab.
+  const requestSeqRef = useRef(0);
+  const loadingMoreRef = useRef(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
@@ -125,24 +139,44 @@ export default function OrdersScreen() {
     })();
   }, []);
 
+  /**
+   * Loads the newest page. `keepOlderPages` (focus refresh): on the Past tab,
+   * merge it into what's already loaded instead of dropping the older pages
+   * the rider paged to — opening an old delivery and coming back used to
+   * reset the list to the newest 50. Tab change, pull-to-refresh and retry
+   * start over from the newest page.
+   */
   const fetchOrders = useCallback(
-    async (showLoader = false) => {
+    async (showLoader = false, keepOlderPages = false) => {
       if (!token) return;
+      const seq = ++requestSeqRef.current;
       if (showLoader) setLoading(true);
 
       try {
-        // Capped — this list has no client-side aggregate depending on
+        // Paged — this list has no client-side aggregate depending on
         // completeness (unlike earnings.tsx's lifetime total, left
-        // unbounded), so a page cap is safe and bounds payload size for a
+        // unbounded), so paging is safe and bounds payload size for a
         // long-tenured rider's order history.
         const res = await apiFetch<{ success: boolean; orders: Order[]; has_more?: boolean }>(
-          `/delivery-partner/orders?status=${tab}&limit=50`,
+          `/delivery-partner/orders?status=${tab}&limit=${ORDERS_PAGE_SIZE}`,
           {},
           token
         );
-        if (res.success) setOrders(res.orders);
+        if (seq !== requestSeqRef.current) return;
+        if (res.success) {
+          const merge = keepOlderPages && tab === "completed" && ordersRef.current.length > ORDERS_PAGE_SIZE;
+          if (merge) {
+            // Older pages stay; whether more exist beyond them is unchanged.
+            setOrders((prev) => mergeFirstPage(prev, res.orders));
+          } else {
+            setOrders(res.orders);
+            setHasMore(!!res.has_more);
+          }
+          setLoadMoreError(false);
+        }
         setLoadError(false);
       } catch {
+        if (seq !== requestSeqRef.current) return;
         setLoadError(true);
       }
 
@@ -152,13 +186,39 @@ export default function OrdersScreen() {
     [token, tab]
   );
 
+  /** Fetch the next older page and append it. */
+  const loadMore = useCallback(async () => {
+    if (!token || !hasMore || loading || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setLoadMoreError(false);
+    const seq = requestSeqRef.current;
+    try {
+      const res = await apiFetch<{ success: boolean; orders: Order[]; has_more?: boolean }>(
+        `/delivery-partner/orders?status=${tab}&limit=${ORDERS_PAGE_SIZE}&offset=${ordersRef.current.length}`,
+        {},
+        token
+      );
+      if (seq !== requestSeqRef.current) return; // list was reloaded meanwhile
+      if (res.success) {
+        setOrders((prev) => appendPage(prev, res.orders));
+        setHasMore(!!res.has_more);
+      }
+    } catch {
+      if (seq === requestSeqRef.current) setLoadMoreError(true);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [token, hasMore, loading, tab]);
+
   useEffect(() => {
     if (token) fetchOrders(true);
   }, [token, tab, fetchOrders]);
 
   useFocusEffect(
     useCallback(() => {
-      if (token) fetchOrders(false);
+      if (token) fetchOrders(false, true);
     }, [token, fetchOrders])
   );
 
@@ -177,7 +237,7 @@ export default function OrdersScreen() {
           <Text style={styles.header}>Orders</Text>
           {orders.length > 0 && (
             <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{orders.length}</Text>
+              <Text style={styles.countBadgeText}>{orders.length}{hasMore ? "+" : ""}</Text>
             </View>
           )}
         </View>
@@ -230,6 +290,27 @@ export default function OrdersScreen() {
               tintColor={Colors.accent}
             />
           }
+          ListFooterComponent={
+            orders.length > 0 && (hasMore || loadMoreError) ? (
+              <View style={styles.footer}>
+                {loadingMore ? (
+                  <ActivityIndicator color={Colors.accent} />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.loadMoreBtn}
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                    accessibilityRole="button"
+                    accessibilityLabel={loadMoreError ? "Couldn't load more. Try again" : "Load older deliveries"}
+                  >
+                    <Text style={styles.loadMoreText}>
+                      {loadMoreError ? "Couldn't load more — tap to try again" : "Load older deliveries"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             loadError ? (
               <View style={styles.centered}>
@@ -271,6 +352,15 @@ export default function OrdersScreen() {
 
 const styles = StyleSheet.create({
   responsiveWrap: { flex: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH, alignSelf: "center" },
+  footer: { alignItems: "center", paddingVertical: Spacing.lg },
+  loadMoreBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+  },
+  loadMoreText: { color: Colors.accent, fontSize: 14, fontWeight: "600" },
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,
