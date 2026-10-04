@@ -27,6 +27,7 @@ import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
 import { restoreRiderRealtimeSession } from "../../lib/riderRealtimeAuth";
 import { fetchUnreadNotificationsShared } from "../../lib/unreadNotificationsCache";
+import { useRiderOrderPolling } from "../../lib/useRiderOrderPolling";
 import LocationPermissionModal from "../../components/LocationPermissionModal";
 import { callNumber } from "../../lib/openLink";
 
@@ -118,6 +119,8 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
+  // Effects key on this, not on the object, which every poll replaces.
+  const hasActiveOrder = !!activeOrder;
   const [accepting, setAccepting] = useState<string | null>(null);
   // Synchronous in-flight guard: `accepting` state only disables the button
   // after React commits the re-render, so a fast double-tap can fire
@@ -326,7 +329,7 @@ export default function HomeScreen() {
 
     return () => {
       locationSub.current?.remove();
-      if (pollRef.current) clearInterval(pollRef.current);
+      // The offers poll interval is cleared by useRiderOrderPolling's own cleanup.
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, [requestLocationPermissions, router]);
@@ -602,51 +605,24 @@ export default function HomeScreen() {
     };
   }, [isOnline, token, sendLastKnownLocation, fetchOffers]);
 
-  useEffect(() => {
-    if (!token) return;
-
-    // Active orders must always be polled — a simulation or manual dispatch can
-    // assign an order even when the driver is marked offline in the app. But a
-    // rider deliberately offline doesn't need that caught within 6s — a manual
-    // dispatch onto an offline driver is a rare admin action, not something
-    // needing near-instant detection — so slow way down (45s) rather than
-    // draining battery/network at the same cadence as an actively-online rider.
-    const ACTIVE_ORDER_INTERVAL_MS = isOnline ? 6000 : 45000;
-    fetchActiveOrder();
-    const activeOrderInterval = setInterval(fetchActiveOrder, ACTIVE_ORDER_INTERVAL_MS);
-
-    if (!isOnline) {
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = null;
-      setOffers([]);
-      return () => clearInterval(activeOrderInterval);
-    }
-
-    // Offer cards only ever render while `!activeOrder` (see visibleOffers
-    // usages below) — polling/subscribing for offers during an active
-    // delivery burns battery/network on data that can never display, right
-    // when GPS tracking is already running hardest.
-    if (activeOrder) {
-      setOffers([]);
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = null;
-      return () => clearInterval(activeOrderInterval);
-    }
-
-    fetchOffers();
-    // 15s fallback poll — Realtime subscription handles instant delivery.
-    pollRef.current = setInterval(fetchOffers, 15000);
-
-    return () => {
-      clearInterval(activeOrderInterval);
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [isOnline, token, fetchOffers, fetchActiveOrder, activeOrder]);
+  // Active-order + offers polling (lib/useRiderOrderPolling.ts). It used to be
+  // one effect here that depended on the activeOrder object, which every poll
+  // replaces, so it re-ran and re-fetched after every response.
+  const clearOffers = useCallback(() => setOffers([]), []);
+  useRiderOrderPolling({
+    token,
+    isOnline,
+    activeOrder,
+    fetchActiveOrder,
+    fetchOffers,
+    clearOffers,
+    offersPollRef: pollRef,
+  });
 
   // Realtime subscription: fire fetchOffers the instant a new offer row lands
   // in driver_order_offers for this driver — no waiting for the next poll cycle.
   useEffect(() => {
-    if (!isOnline || !token || activeOrder) {
+    if (!isOnline || !token || hasActiveOrder) {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
       return;
@@ -707,7 +683,7 @@ export default function HomeScreen() {
       realtimeChannelRef.current?.unsubscribe();
       realtimeChannelRef.current = null;
     };
-  }, [isOnline, token, fetchOffers, activeOrder]);
+  }, [isOnline, token, fetchOffers, hasActiveOrder]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
