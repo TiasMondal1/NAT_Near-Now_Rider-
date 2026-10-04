@@ -85,6 +85,8 @@ type ActiveOrder = {
   order_code: string;
   status: string;
   total_amount: number;
+  /** Cash to collect at the door (0 = prepaid). Absent from older backends — fall back to total_amount. */
+  amount_to_collect?: number;
   customer_address: string;
   customer_lat: number;
   customer_lng: number;
@@ -542,7 +544,13 @@ export default function DeliveryScreen() {
         </View>
         {!isCompleted && (
           <View style={styles.amountBadge}>
-            <Text style={styles.amountText}>₹{order.total_amount}</Text>
+            <Text style={styles.amountText}>
+              {order.amount_to_collect == null
+                ? `₹${order.total_amount}`
+                : order.amount_to_collect > 0
+                  ? `Collect ₹${order.amount_to_collect}`
+                  : "Prepaid"}
+            </Text>
           </View>
         )}
       </View>
