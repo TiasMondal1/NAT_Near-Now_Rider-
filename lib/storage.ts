@@ -1,77 +1,80 @@
 /**
- * Supabase Storage helpers for uploading images from the app.
+ * Uploads the rider's own profile photo.
  *
- * Bucket used directly from the app:
- *   delivery_partner_image – rider's own profile photo (public)
+ * Bucket: delivery_partner_image (public, so the returned URL works directly
+ * in <Image>).
  *
- * Should be PUBLIC so the returned URL is directly usable in
- * <Image source={{ uri }}> without signed-URL expiry.
+ * How (2026-10-27): the backend hands out a one-photo upload token for a fresh
+ * path in this rider's own folder (POST /delivery-partner/profile-photo/upload-url);
+ * the photo then goes straight to Storage with uploadToSignedUrl, which needs
+ * no Storage policy. This used to upload with the anon key and `upsert: true`
+ * to `<riderId>/avatar.*`, so the bucket had to let anyone write — anyone
+ * holding the (public) key could overwrite any rider's photo. A new path per
+ * upload means nothing is ever overwritten. Because the token, not RLS,
+ * authorises the upload, it also works through a client that has been given a
+ * Supabase Auth session for Realtime (see pending-verification.tsx).
  *
- * Verification documents (Aadhaar, PAN, Driving License, Vehicle RC, and the
- * 3 vehicle photos) are NOT uploaded from here — that bucket
- * (delivery-partner-documents) is private, and uploads are proxied through
- * the backend instead (see lib/riderVerificationDocuments.ts), since this app
- * has no real Supabase Auth session to scope a client-side storage policy to.
- *
- * The bucket, the delivery_partners.profile_image_url column, and the
- * anon-key write policy this upload relies on are created by
- * supabase/migrations/20260804000000_delivery_partner_verification_documents.sql
- * in the near-and-now repo — mirrors the shopkeeper app's
- * store-owner-images bucket.
- *
- * This supersedes the rider's previous profile-photo flow (base64 POST to
- * PATCH /delivery-partner/profile-image, writing to the rider-avatars
- * bucket) for consistency with the shopkeeper build — that old route is
- * still live (kept intentionally, not removed) with a real bucket now
- * backing it (created 2026-07-27, having never actually existed before
- * that), but this app's own upload path no longer calls it.
+ * Verification documents (Aadhaar, PAN, Driving License, Vehicle RC and the
+ * three vehicle photos) are NOT uploaded from here — they go through the
+ * backend into the private delivery-partner-documents bucket
+ * (lib/riderVerificationDocuments.ts).
  */
 
+import { apiFetch } from '../constants/api';
+import { getSession } from '../session';
 import { supabase } from './supabase';
 
 type UploadResult =
   | { ok: true; url: string }
   | { ok: false; error: string };
 
-/**
- * Upload an image file from a local URI to a Supabase Storage bucket.
- * Returns the public URL on success.
- */
-async function uploadImage(
-  bucket: string,
-  path: string,
-  localUri: string,
-  mimeType = 'image/jpeg'
-): Promise<UploadResult> {
+type UploadUrl = { bucket: string; path: string; token: string; public_url: string };
+
+const MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+};
+
+/** MIME type from a picker URI; extension-less content:// paths are JPEG. */
+function imageMime(localUri: string): string {
+  const lastSegment = localUri.split(/[?#]/)[0].split('/').pop() ?? '';
+  const dot = lastSegment.lastIndexOf('.');
+  const ext = dot >= 0 ? lastSegment.slice(dot + 1).toLowerCase() : '';
+  return MIME_BY_EXT[ext] ?? 'image/jpeg';
+}
+
+/** Upload the signed-in rider's profile photo. Returns its public URL. */
+export async function uploadRiderImage(localUri: string): Promise<UploadResult> {
   if (!supabase) return { ok: false, error: 'Supabase not configured' };
 
   try {
+    const session = await getSession();
+    if (!session?.token) return { ok: false, error: 'Please log in again to upload your photo.' };
+
     // React Native: fetch the local file and convert to ArrayBuffer
     const response = await fetch(localUri);
     const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) return { ok: false, error: 'Selected image is empty or could not be read' };
+
+    const contentType = imageMime(localUri);
+    const upload = await apiFetch<UploadUrl>(
+      '/delivery-partner/profile-photo/upload-url',
+      { method: 'POST', body: { content_type: contentType } },
+      session.token,
+      0
+    );
 
     const { error } = await supabase.storage
-      .from(bucket)
-      .upload(path, arrayBuffer, {
-        contentType: mimeType,
-        upsert: true,
-      });
-
+      .from(upload.bucket)
+      .uploadToSignedUrl(upload.path, upload.token, arrayBuffer, { contentType });
     if (error) return { ok: false, error: error.message };
 
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    return { ok: true, url: data.publicUrl };
+    return { ok: true, url: upload.public_url };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Upload failed' };
   }
-}
-
-/** Upload the rider's own profile photo. */
-export async function uploadRiderImage(
-  riderId: string,
-  localUri: string
-): Promise<UploadResult> {
-  const ext = localUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const path = `${riderId}/avatar.${ext}`;
-  return uploadImage('delivery_partner_image', path, localUri);
 }

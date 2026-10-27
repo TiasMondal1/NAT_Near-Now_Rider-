@@ -179,7 +179,7 @@ export default function SignupScreen() {
     if (!session?.token || !session?.user?.id) return;
     setUploadingImage(true);
     try {
-      const res = await uploadRiderImage(session.user.id, uri);
+      const res = await uploadRiderImage(uri);
       if (!res.ok) {
         Alert.alert("Upload failed", res.error);
         return;
@@ -291,7 +291,7 @@ export default function SignupScreen() {
       if (pendingImageUri) {
         (async () => {
           try {
-            const uploadRes = await uploadRiderImage(res.user!.id, pendingImageUri);
+            const uploadRes = await uploadRiderImage(pendingImageUri);
             if (!uploadRes.ok) return;
             await apiFetch(
               "/delivery-partner/photo-urls",

@@ -162,7 +162,7 @@ export default function BillingInfoScreen() {
     if (!session?.user?.id) return;
     setUploadingImage(true);
     try {
-      const res = await uploadRiderImage(session.user.id, result.assets[0].uri);
+      const res = await uploadRiderImage(result.assets[0].uri);
       if (!res.ok) {
         Alert.alert("Upload failed", res.error);
         return;

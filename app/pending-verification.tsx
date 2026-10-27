@@ -24,8 +24,9 @@ import VerificationNavBar from "../components/VerificationNavBar";
 import { callNumber } from "../lib/openLink";
 
 // A dedicated client, NOT the shared one from lib/supabase.ts (which
-// lib/storage.ts's uploadRiderImage() also uses for plain anon-key photo
-// uploads). restoreRiderRealtimeSession() below calls client.auth.setSession()
+// lib/storage.ts's uploadRiderImage() also uses — it now uploads with a
+// backend-issued token, so it no longer depends on the anon role, but other
+// anon-role reads through the shared client still do). restoreRiderRealtimeSession() below calls client.auth.setSession()
 // to mint a real Supabase Auth session for Realtime — on a shared client,
 // that silently flips every subsequent request's effective role from `anon`
 // to `authenticated`. The delivery_partner_image/delivery_partner_vehicle

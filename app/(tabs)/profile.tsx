@@ -231,7 +231,7 @@ export default function ProfileScreen() {
 
     setUploadingImage(true);
     try {
-      const uploadRes = await uploadRiderImage(session.user.id, result.assets[0].uri);
+      const uploadRes = await uploadRiderImage(result.assets[0].uri);
       if (!uploadRes.ok) {
         Alert.alert("Error", uploadRes.error || "Failed to upload image. Please try again.");
         return;
