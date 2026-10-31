@@ -21,6 +21,7 @@ import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { useRiderVerificationGate } from "../../lib/useRiderVerificationGate";
 import { callNumber, openNavigation } from "../../lib/openLink";
+import CodCollectionBox, { isCodSettled, type CodCollection } from "../../components/CodCollectionBox";
 
 function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
   const R = 6371, r = (d: number) => (d * Math.PI) / 180;
@@ -96,6 +97,8 @@ type ActiveOrder = {
   receiver_phone?: string | null;
   receiver_address?: string | null;
   delivery_otp_verified?: boolean;
+  /** Doorstep UPI QR / cash step — only sent while the backend has it switched on. */
+  cod_collection?: CodCollection;
 };
 
 function PickupStopCard({
@@ -446,6 +449,16 @@ export default function DeliveryScreen() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, [isDeliveryComplete]);
 
+  // Payment-step updates from CodCollectionBox (its own fast poll / actions);
+  // identity-stable so the box's poll effect isn't restarted every render.
+  const onCodChange = useCallback((c: CodCollection) => {
+    setOrder((prev) =>
+      prev && JSON.stringify(prev.cod_collection) !== JSON.stringify(c) ? { ...prev, cod_collection: c } : prev
+    );
+  }, []);
+  const codStepPending =
+    !!order?.cod_collection && (order.amount_to_collect ?? 0) > 0 && !isCodSettled(order.cod_collection);
+
   const markDelivered = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert("Confirm Delivery", "Mark this order as delivered to the customer?", [
@@ -547,9 +560,13 @@ export default function DeliveryScreen() {
             <Text style={styles.amountText}>
               {order.amount_to_collect == null
                 ? `₹${order.total_amount}`
-                : order.amount_to_collect > 0
-                  ? `Collect ₹${order.amount_to_collect}`
-                  : "Prepaid"}
+                : order.amount_to_collect <= 0
+                  ? "Prepaid"
+                  : order.cod_collection?.status === "paid_upi"
+                    ? "Paid (UPI)"
+                    : order.cod_collection?.status === "cash_collected"
+                      ? "Cash collected"
+                      : `Collect ₹${order.amount_to_collect}`}
             </Text>
           </View>
         )}
@@ -703,15 +720,25 @@ export default function DeliveryScreen() {
                     </View>
                   )}
 
+                  {order.cod_collection && (order.amount_to_collect ?? 0) > 0 && token ? (
+                    <CodCollectionBox
+                      orderId={orderId!}
+                      token={token}
+                      amount={order.amount_to_collect!}
+                      collection={order.cod_collection}
+                      onChange={onCodChange}
+                    />
+                  ) : null}
+
                   <View style={styles.deliveryActions}>
                     <TouchableOpacity style={styles.navBtn} onPress={openCustomerNav} activeOpacity={0.8}>
                       <MaterialCommunityIcons name="navigation-variant" size={16} color={Colors.accent} />
                       <Text style={styles.navBtnText}>Navigate</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.primaryBtn, styles.primaryBtnFlex, (!otpVerified || delivering) && styles.primaryBtnDisabled]}
+                      style={[styles.primaryBtn, styles.primaryBtnFlex, (!otpVerified || delivering || codStepPending) && styles.primaryBtnDisabled]}
                       onPress={markDelivered}
-                      disabled={!otpVerified || delivering}
+                      disabled={!otpVerified || delivering || codStepPending}
                       activeOpacity={0.8}
                     >
                       {delivering ? (

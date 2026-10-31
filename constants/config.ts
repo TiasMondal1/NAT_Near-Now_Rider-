@@ -32,11 +32,6 @@ export const SUPABASE_CONFIG = {
     "",
 } as const;
 
-// Razorpay Configuration
-export const RAZORPAY_CONFIG = {
-  KEY_ID: process.env.RAZORPAY_KEY_ID || extra.razorpayKeyId || "",
-} as const;
-
 // Admins a rider can call for verification/support help.
 export const ADMIN_CONTACTS = [
   { name: "Tias Mondal", phone: "+919062692914" },
