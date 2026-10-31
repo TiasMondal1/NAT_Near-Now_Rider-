@@ -171,14 +171,17 @@ export default function CodCollectionBox({
 
       {showingQr && !expired && !imageFailed ? (
         <View style={styles.qrWrap}>
+          {/* Razorpay's image_url is a tall poster (≈674×1644) with the QR card
+              centred; "cover" in a square shows just that card, large enough
+              to scan. "contain" shrank the code itself to ~60dp. */}
           <Image
             source={{ uri: collection.qr_image_url! }}
             style={styles.qrImage}
-            resizeMode="contain"
+            resizeMode="cover"
             onError={() => setImageFailed(true)}
             accessibilityLabel={`UPI QR code for ₹${amount}`}
           />
-          <Text style={styles.qrHint}>Ask the customer to scan with any UPI app</Text>
+          <Text style={styles.qrHint}>Ask the customer to scan — ₹{amount} fills in automatically</Text>
           <View style={styles.waitingRow}>
             <ActivityIndicator size="small" color={Colors.accent} />
             <Text style={styles.waitingText}>Waiting for payment · expires in {fmtSeconds(secondsLeft)}</Text>
@@ -218,7 +221,7 @@ const styles = StyleSheet.create({
   title: { color: Colors.text, fontSize: 14, fontWeight: "800" },
   body: { color: Colors.textSecondary, fontSize: 13, lineHeight: 18 },
   qrWrap: { alignItems: "center", gap: Spacing.sm },
-  qrImage: { width: 220, height: 220, backgroundColor: Colors.bg, borderRadius: BorderRadius.sm },
+  qrImage: { width: "100%", maxWidth: 300, aspectRatio: 1, backgroundColor: Colors.bg, borderRadius: BorderRadius.sm },
   qrHint: { color: Colors.text, fontSize: 13, fontWeight: "600", textAlign: "center" },
   waitingRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   waitingText: { color: Colors.textSecondary, fontSize: 12 },
