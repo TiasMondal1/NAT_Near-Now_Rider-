@@ -16,6 +16,7 @@ import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constant
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { ORDERS_PAGE_SIZE, appendPage, mergeFirstPage } from "../../lib/orderPaging";
+import { formatOrderDate } from "../../lib/formatDate";
 
 type Order = {
   id: string;
@@ -41,19 +42,15 @@ const STATUS_CONFIG: Record<string, { label: string; icon: string; color: string
   completed: { label: "Delivered", icon: "check-circle", color: Colors.success, bg: Colors.successLight },
 };
 
-function formatDate(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
 
-const OrderCard = memo(function OrderCard({ item, onPress }: { item: Order; onPress: () => void }) {
+const OrderCard = memo(function OrderCard({ item, onPress }: { item: Order; onPress: (id: string) => void }) {
   const config = STATUS_CONFIG[item.status] || {
     label: item.status, icon: "help-circle", color: Colors.textMuted, bg: Colors.surfaceLight,
   };
   const itemCount = item.order_items?.length || 0;
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={styles.card} onPress={() => onPress(item.id)} activeOpacity={0.7}>
       <View style={styles.cardTop}>
         <View style={[styles.cardIconWrap, { backgroundColor: config.bg }]}>
           <MaterialCommunityIcons name={config.icon as any} size={20} color={config.color} />
@@ -80,7 +77,7 @@ const OrderCard = memo(function OrderCard({ item, onPress }: { item: Order; onPr
           {itemCount > 0 && (
             <Text style={styles.metaText}>{itemCount} item{itemCount > 1 ? "s" : ""}</Text>
           )}
-          <Text style={styles.metaText}>{formatDate(item.placed_at)}</Text>
+          <Text style={styles.metaText}>{formatOrderDate(item.placed_at)}</Text>
         </View>
       </View>
 
@@ -148,7 +145,12 @@ export default function OrdersScreen() {
    */
   const fetchOrders = useCallback(
     async (showLoader = false, keepOlderPages = false) => {
-      if (!token) return;
+      if (!token) {
+        // Pull-to-refresh sets `refreshing` before calling this; bail out
+        // without clearing it and the spinner never stops.
+        setRefreshing(false);
+        return;
+      }
       const seq = ++requestSeqRef.current;
       if (showLoader) setLoading(true);
 
@@ -216,18 +218,27 @@ export default function OrdersScreen() {
     if (token) fetchOrders(true);
   }, [token, tab, fetchOrders]);
 
+  // Refetch on RE-focus only. The mount effect above already fetches, and
+  // useFocusEffect also fires on first focus (and whenever fetchOrders'
+  // identity changes with `tab`), which doubled every request.
+  const hasFocusedRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!hasFocusedRef.current) { hasFocusedRef.current = true; return; }
       if (token) fetchOrders(false, true);
     }, [token, fetchOrders])
   );
 
-  const renderOrder = useCallback(({ item }: { item: Order }) => (
-    <OrderCard
-      item={item}
-      onPress={() => router.push({ pathname: "/delivery/[orderId]", params: { orderId: item.id } })}
-    />
-  ), [router]);
+  // Identity-stable so OrderCard's memo isn't defeated by a fresh closure
+  // per row on every list render.
+  const openOrder = useCallback(
+    (id: string) => router.push({ pathname: "/delivery/[orderId]", params: { orderId: id } }),
+    [router]
+  );
+  const renderOrder = useCallback(
+    ({ item }: { item: Order }) => <OrderCard item={item} onPress={openOrder} />,
+    [openOrder]
+  );
 
   return (
     <SafeAreaView style={styles.safe}>

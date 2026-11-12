@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import { getSession } from "../session";
+import { getSession, lastSessionReadFailed } from "../session";
 import {
   checkRiderVerification,
   isRiderVerified,
@@ -30,6 +30,9 @@ export function useRiderVerificationGate(mode: GateMode) {
   const [documents, setDocuments] = useState<VerificationDocument[]>(cached?.documents ?? []);
   const [documentsUploaded, setDocumentsUploaded] = useState(cached?.documentsUploaded ?? false);
   const [verified, setVerified] = useState(cached?.verified ?? false);
+  // True when the most recent check could not reach the backend. Not a
+  // verification verdict — see the catch block in evaluate().
+  const [checkFailed, setCheckFailed] = useState(false);
   // Mirrors `verified` for evaluate() to read without going stale — evaluate
   // is a useCallback with only `mode` in its deps, so referencing `verified`
   // directly inside it would close over whatever value existed when this
@@ -42,6 +45,11 @@ export function useRiderVerificationGate(mode: GateMode) {
   const evaluate = useCallback(async () => {
     const session = await getSession();
     if (!session?.token) {
+      // A transient SecureStore read failure returns null WITHOUT clearing
+      // the real session (see session.ts). That's "unknown", not "logged
+      // out" — skip this cycle instead of bouncing to /phone, where
+      // _layout.tsx would immediately see the valid session and bounce back.
+      if (lastSessionReadFailed()) return null;
       router.replace("/phone");
       return null;
     }
@@ -49,21 +57,23 @@ export function useRiderVerificationGate(mode: GateMode) {
     let result;
     try {
       result = await checkRiderVerification(session.token);
+      // Partial/failed fetch: not a real negative — treat like the network
+      // failure below rather than redirecting or poisoning the cache.
+      if (result.fetchFailed) throw new Error("verification fetch failed");
     } catch {
       // A network failure here doesn't mean the rider actually failed
       // verification — it just means this particular check couldn't
-      // complete. Only treat it as a lockout if we've never actually
-      // confirmed this rider is verified: a transient blip (common right
-      // when the app resumes/reconnects, which the AppState-triggered
-      // re-check below now runs on every single time) shouldn't bounce an
-      // already-verified rider out to /pending-verification just because
-      // one connectivity hiccup happened to coincide with a re-check.
-      if (mode === "require-verified" && !verifiedRef.current) {
-        router.replace("/pending-verification");
-      }
+      // complete. Never redirect on it: a verified rider must not be
+      // bounced to /pending-verification or /documents over a connectivity
+      // blip (cold start offline included — there is no cache yet then).
+      // Instead expose `checkFailed` so the gated layout can show a
+      // "couldn't verify, retry" state rather than a blank spinner, and let
+      // the 30s poll / focus / foreground re-checks self-heal.
+      setCheckFailed(true);
       return null;
     }
 
+    setCheckFailed(false);
     setProfile(result.profile);
     setDocuments(result.documents);
     setDocumentsUploaded(result.documentsUploaded);
@@ -89,8 +99,13 @@ export function useRiderVerificationGate(mode: GateMode) {
     };
   }, [evaluate]);
 
+  // Re-check on RE-focus only; the mount effect above already ran the first
+  // evaluate(), and useFocusEffect also fires on initial focus, which doubled
+  // the profile + documents requests on every mount.
+  const hasFocusedRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!hasFocusedRef.current) { hasFocusedRef.current = true; return; }
       void evaluate();
     }, [evaluate])
   );
@@ -152,6 +167,7 @@ export function useRiderVerificationGate(mode: GateMode) {
     documents,
     documentsUploaded,
     verified,
+    checkFailed,
     isVerified: isRiderVerified(profile, documentsUploaded),
     refresh: evaluate,
   };

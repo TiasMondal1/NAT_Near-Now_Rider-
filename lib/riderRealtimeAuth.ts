@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSession, saveSession } from "../session";
+import { isSupabaseConfigured } from "./supabase";
 
 // GoTrue rotates the refresh token on every silent refresh (access tokens
 // last ~1hr). This app's own session lives up to 30 days without the rider
@@ -30,6 +31,9 @@ export async function restoreRiderRealtimeSession(client: SupabaseClient): Promi
   // Realtime is a best-effort enhancement over the poll fallback, so any
   // failure here should degrade to that, never crash.
   try {
+    // No Supabase in this build (see lib/supabase.ts): every caller falls
+    // back to polling, and no channel is ever opened on the placeholder client.
+    if (!isSupabaseConfigured) return null;
     const session = await getSession();
     if (!session?.supabaseSession || !session?.user?.id) return null;
 

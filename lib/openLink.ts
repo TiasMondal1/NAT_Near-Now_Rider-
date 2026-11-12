@@ -34,7 +34,7 @@ export async function openExternal(
 /** Turn-by-turn navigation in the native maps app, falling back to Google Maps on the web. */
 export function openNavigation(lat: number | string, lng: number | string): Promise<boolean> {
   const native = Platform.select({
-    ios: `maps:0,0?q=@${lat},${lng}`,
+    ios: `maps://?daddr=${lat},${lng}&dirflg=d`,
     android: `google.navigation:q=${lat},${lng}`,
   });
   const web = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;

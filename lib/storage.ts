@@ -22,7 +22,7 @@
 
 import { apiFetch } from '../constants/api';
 import { getSession } from '../session';
-import { supabase } from './supabase';
+import { isSupabaseConfigured, supabase } from './supabase';
 
 type UploadResult =
   | { ok: true; url: string }
@@ -49,7 +49,7 @@ function imageMime(localUri: string): string {
 
 /** Upload the signed-in rider's profile photo. Returns its public URL. */
 export async function uploadRiderImage(localUri: string): Promise<UploadResult> {
-  if (!supabase) return { ok: false, error: 'Supabase not configured' };
+  if (!isSupabaseConfigured) return { ok: false, error: 'Photo upload is not set up in this build.' };
 
   try {
     const session = await getSession();

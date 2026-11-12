@@ -42,13 +42,20 @@ export default function BillingInfoScreen() {
   // mirroring signup.tsx's profileFetchedRef fix for the identical symptom.
   const infoFetchedRef = useRef(false);
 
+  // A 20s poll and a post-save reload can be in flight together; the older
+  // response must not overwrite the newer one (it would reset upiId and the
+  // "nothing changed" baseline to the pre-save value and re-enable a
+  // duplicate submission). Same guard profile.tsx already has.
+  const pendingReqSeqRef = useRef(0);
   const loadPendingChangeRequest = async (t: string) => {
+    const seq = ++pendingReqSeqRef.current;
     try {
       const json = await apiFetch<{ success: boolean; request: PendingChangeRequest }>(
         "/delivery-partner/profile-change-request",
         {},
         t
       );
+      if (seq !== pendingReqSeqRef.current) return;
       // profile.tsx's identity-field edits (name/email/address) share this
       // same request queue — only surface it here if it actually contains
       // upi_id, otherwise this screen would show a "pending review" banner
@@ -78,11 +85,14 @@ export default function BillingInfoScreen() {
   // While a billing change is pending, poll for the admin's decision so the
   // banner clears without needing to leave and re-enter this screen — mirrors
   // profile.tsx's identical pattern for identity-field pending requests.
+  // Keyed on presence, not the object: each poll sets a fresh object, which
+  // tore the interval down and recreated it on every tick.
+  const hasPendingChangeRequest = !!pendingChangeRequest;
   useEffect(() => {
-    if (!pendingChangeRequest || !token) return;
+    if (!hasPendingChangeRequest || !token) return;
     const interval = setInterval(() => loadPendingChangeRequest(token), 20_000);
     return () => clearInterval(interval);
-  }, [pendingChangeRequest, token]);
+  }, [hasPendingChangeRequest, token]);
 
   const loadBillingInfo = async () => {
     const session = await getSession();

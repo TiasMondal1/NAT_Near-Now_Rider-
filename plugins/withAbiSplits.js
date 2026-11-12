@@ -81,19 +81,23 @@ module.exports = function withAbiSplits(config) {
         abi {
             enable !isBundleBuild`
       );
-      mod.modResults.contents = contents;
-      return mod;
+      // Fall through: the migrated block still needs step 2 (per-ABI
+      // versionCodeOverride), otherwise Play rejects the split APKs for
+      // sharing a versionCode. Previously returned here.
     }
 
-    // ── Idempotent: skip if already patched ──────────────────────────────────
-    if (contents.includes("splits {")) return mod;
+    // ── Idempotent: skip if already patched (our block, not any `splits {`) ──
+    const alreadyHasOurSplits = contents.includes("isBundleBuild") || contents.includes("isBuildingBundle");
+    if (alreadyHasOurSplits && contents.includes("versionCodeOverride")) return mod;
 
     // ── 1. Inject splits block inside android { } ────────────────────────────
-    const withSplits = insertAfterAndroidResourcesBlock(contents, SPLITS_BLOCK);
-    if (withSplits) {
-      contents = withSplits;
-    } else {
-      console.warn("[withAbiSplits] Could not find androidResources block — splits not injected.");
+    if (!alreadyHasOurSplits) {
+      const withSplits = insertAfterAndroidResourcesBlock(contents, SPLITS_BLOCK);
+      if (withSplits) {
+        contents = withSplits;
+      } else {
+        console.warn("[withAbiSplits] Could not find androidResources block — splits not injected.");
+      }
     }
 
     // ── 2. Inject versionCodeOverride block after android { } ────────────────

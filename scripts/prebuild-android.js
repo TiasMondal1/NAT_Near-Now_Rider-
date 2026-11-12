@@ -33,11 +33,14 @@ function stopGradleDaemons() {
 function forceKillJavaProcesses() {
   if (!isWin) return;
 
-  console.log("Force-killing any remaining Java/Gradle processes...");
-  // /F = force, /T = kill child tree, /IM = image name
-  spawnSync("taskkill", ["/F", "/T", "/IM", "java.exe"], {
-    stdio: "pipe", // suppress "process not found" noise when nothing is running
-  });
+  // Previously ran `taskkill /F /T /IM java.exe`, which killed EVERY Java
+  // process on the machine (IDEs, other projects' Gradle daemons, CI agents).
+  // Only this project's Gradle daemons are our business: `gradlew --stop`
+  // (run by the caller) handles those. Opt in to the old nuclear behaviour
+  // with KILL_ALL_JAVA=1 if a daemon is truly wedged.
+  if (process.env.KILL_ALL_JAVA !== "1") return;
+  console.log("KILL_ALL_JAVA=1: force-killing all Java processes...");
+  spawnSync("taskkill", ["/F", "/T", "/IM", "java.exe"], { stdio: "pipe" });
 }
 
 // ─── 3. Remove Gradle lock files ─────────────────────────────────────────────

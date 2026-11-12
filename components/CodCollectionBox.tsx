@@ -26,6 +26,7 @@ export const isCodSettled = (c?: CodCollection | null) => c?.status === "paid_up
 type CodResponse = { success: boolean; amount_to_collect?: number; cod_collection: CodCollection };
 
 const POLL_MS = 3000;
+const QR_EXPIRY_GRACE_MS = 90_000;
 
 function fmtSeconds(total: number) {
   const m = Math.floor(total / 60);
@@ -53,14 +54,23 @@ export default function CodCollectionBox({
   const [now, setNow] = useState(() => Date.now());
   const [imageFailed, setImageFailed] = useState(false);
 
+  // Prefer the server's figure for what is owed; `amount` (the order's
+  // amount_to_collect) is the fallback for older backends that don't send it.
+  const due = collection.amount_due ?? amount;
+
   const showingQr = collection.status === "awaiting" && !!collection.qr_image_url;
   const closeByMs = collection.qr_close_by ? Date.parse(collection.qr_close_by) : 0;
   const secondsLeft = showingQr ? Math.max(0, Math.round((closeByMs - now) / 1000)) : 0;
   const expired = showingQr && secondsLeft === 0;
+  // The countdown compares a server timestamp with the device clock. A phone
+  // a couple of minutes fast would show a live QR as expired and stop the
+  // payment poll while the customer could still pay — keep polling for a
+  // grace window past client-side expiry so a late "paid_upi" is still seen.
+  const inGrace = showingQr && expired && now - closeByMs < QR_EXPIRY_GRACE_MS;
 
   // Countdown tick + payment-status poll, only while a live QR is on screen.
   useEffect(() => {
-    if (!showingQr || expired) return;
+    if (!showingQr || (expired && !inGrace)) return;
     const tick = setInterval(() => setNow(Date.now()), 1000);
     const poll = setInterval(async () => {
       try {
@@ -77,7 +87,7 @@ export default function CodCollectionBox({
       clearInterval(tick);
       clearInterval(poll);
     };
-  }, [showingQr, expired, orderId, token, onChange]);
+  }, [showingQr, expired, inGrace, orderId, token, onChange]);
 
   const run = async (kind: "qr" | "cash") => {
     if (busyRef.current) return;
@@ -101,7 +111,7 @@ export default function CodCollectionBox({
 
   const confirmCash = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Alert.alert("Cash received?", `Confirm you collected ₹${amount} in cash from the customer.`, [
+    Alert.alert("Cash received?", `Confirm you collected ₹${due} in cash from the customer.`, [
       { text: "Cancel", style: "cancel" },
       { text: "Yes, collected", onPress: () => run("cash") },
     ]);
@@ -111,7 +121,7 @@ export default function CodCollectionBox({
     return (
       <View style={[styles.settledRow, { backgroundColor: Colors.success + "18" }]}>
         <MaterialCommunityIcons name="check-decagram" size={16} color={Colors.success} />
-        <Text style={[styles.settledText, { color: Colors.success }]}>Paid ₹{amount} by UPI — don&apos;t take cash</Text>
+        <Text style={[styles.settledText, { color: Colors.success }]}>Paid ₹{due} by UPI — don&apos;t take cash</Text>
       </View>
     );
   }
@@ -119,7 +129,7 @@ export default function CodCollectionBox({
     return (
       <View style={[styles.settledRow, { backgroundColor: Colors.surface }]}>
         <MaterialCommunityIcons name="cash-check" size={16} color={Colors.text} />
-        <Text style={styles.settledText}>₹{amount} cash collected</Text>
+        <Text style={styles.settledText}>₹{due} cash collected</Text>
       </View>
     );
   }
@@ -166,7 +176,7 @@ export default function CodCollectionBox({
     <View style={styles.box}>
       <View style={styles.titleRow}>
         <MaterialCommunityIcons name="cash-register" size={16} color={Colors.accent} />
-        <Text style={styles.title}>Collect ₹{amount}</Text>
+        <Text style={styles.title}>Collect ₹{due}</Text>
       </View>
 
       {showingQr && !expired && !imageFailed ? (
@@ -179,9 +189,9 @@ export default function CodCollectionBox({
             style={styles.qrImage}
             resizeMode="cover"
             onError={() => setImageFailed(true)}
-            accessibilityLabel={`UPI QR code for ₹${amount}`}
+            accessibilityLabel={`UPI QR code for ₹${due}`}
           />
-          <Text style={styles.qrHint}>Ask the customer to scan — ₹{amount} fills in automatically</Text>
+          <Text style={styles.qrHint}>Ask the customer to scan — ₹{due} fills in automatically</Text>
           <View style={styles.waitingRow}>
             <ActivityIndicator size="small" color={Colors.accent} />
             <Text style={styles.waitingText}>Waiting for payment · expires in {fmtSeconds(secondsLeft)}</Text>

@@ -16,7 +16,11 @@ import ProfileChangeOutcomeModal from "../components/ProfileChangeOutcomeModal";
 // that relaunches the app after it was killed still has a task definition
 // to run against — defining it lazily inside a screen would be too late.
 import { stopBackgroundLocationTracking } from "../lib/backgroundLocationTask";
-import "../lib/backgroundLocationTask";
+import { initCrashReporting, setCrashUser } from "../lib/crashReporting";
+import { ensureOrdersChannel } from "../lib/orderAlertChannel";
+
+// Before any component mounts so early render errors are captured too.
+initCrashReporting();
 
 // expo-notifications is unsupported in Expo Go (SDK 53+); skip in that environment
 const isExpoGo = Constants.executionEnvironment === "storeClient";
@@ -56,12 +60,23 @@ export default function RootLayout() {
   // mounted, but a 401 can arrive (and unmount it) from any screen, and would
   // otherwise leave the foreground-service location task running for a rider
   // who's no longer authenticated. See bug_fixes doc, 2026-10-01.
+  //
+  // It also sends the rider to /phone itself. Previously nothing navigated on
+  // a 401: the redirect effect below only re-runs when the route changes, so
+  // the rider stayed on a screen where every action failed with "Session
+  // expired" until the verification gate's 30 s poll noticed — and screens
+  // without that gate (notifications, preferences, billing) never did.
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
   useEffect(() => {
     setSessionExpiredHandler(() => {
       setIsLoggedIn(false);
+      setCrashUser(null);
       stopBackgroundLocationTracking().catch(() => {});
+      const current = segmentsRef.current[0];
+      if (current !== "phone" && current !== "otp") router.replace("/phone");
     });
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     let mounted = true;
@@ -71,6 +86,7 @@ export default function RootLayout() {
       const loggedIn = Boolean(session?.token);
       setIsLoggedIn(loggedIn);
       setAuthReady(true);
+      setCrashUser(loggedIn ? session?.user?.id ?? null : null);
       // Cold start with no valid session (expired while killed, or a previous
       // install/session left the OS-level task registered) — the task would
       // otherwise only be noticed and stopped once a screen that imports it
@@ -95,16 +111,9 @@ export default function RootLayout() {
         if (finalStatus !== "granted") return;
 
         if (Platform.OS === "android") {
-          // Channel id bumped to _v2: Android locks a channel's sound at
-          // creation time, so a previously-created "orders" channel can never
-          // pick up order_chime.wav — only a new channel id does.
-          await Notifications!.setNotificationChannelAsync("orders_v2", {
-            name: "Order Alerts",
-            importance: Notifications!.AndroidImportance.MAX,
-            vibrationPattern: [0, 250, 250, 250],
-            lightColor: Colors.accent,
-            sound: "order_chime.wav",
-          });
+          // The "orders_v2" channel with the order chime — defined once in
+          // lib/orderAlertChannel.ts (see there for why the id is _v2).
+          await ensureOrdersChannel(Notifications!);
         }
 
         // Explicit projectId, not just implicit auto-resolution — this app
@@ -165,6 +174,9 @@ export default function RootLayout() {
 
       const loggedIn = Boolean(session?.token);
       setIsLoggedIn(loggedIn);
+      // Keeps crash reports tied to the rider after a login or logout in this
+      // run, not only to whoever was signed in at cold start.
+      setCrashUser(loggedIn ? session?.user?.id ?? null : null);
 
       const current = segments[0];
       const inAuthFlow = current === "phone" || current === "otp";

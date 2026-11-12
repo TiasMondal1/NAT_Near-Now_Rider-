@@ -21,25 +21,29 @@ export type UnreadNotification = {
  */
 const TTL_MS = 8000; // comfortably under both pollers' intervals (20s/30s)
 
-let cached: { data: UnreadNotification[]; ts: number } | null = null;
-let inFlight: Promise<UnreadNotification[]> | null = null;
+// Keyed by token: on a shared device, logout → login as another rider within
+// TTL_MS must not hand the new rider the previous rider's unread list (and
+// potentially the wrong profile-review-outcome modal).
+let cached: { token: string; data: UnreadNotification[]; ts: number } | null = null;
+let inFlight: { token: string; promise: Promise<UnreadNotification[]> } | null = null;
 
 export async function fetchUnreadNotificationsShared(token: string): Promise<UnreadNotification[]> {
   const now = Date.now();
-  if (cached && now - cached.ts < TTL_MS) return cached.data;
-  if (inFlight) return inFlight;
+  if (cached && cached.token === token && now - cached.ts < TTL_MS) return cached.data;
+  if (inFlight && inFlight.token === token) return inFlight.promise;
 
-  inFlight = apiFetch<UnreadNotification[]>("/delivery-partner/notifications?unreadOnly=true", {}, token)
+  const promise = apiFetch<UnreadNotification[]>("/delivery-partner/notifications?unreadOnly=true", {}, token)
     .then((data) => {
       const list = Array.isArray(data) ? data : [];
-      cached = { data: list, ts: Date.now() };
+      cached = { token, data: list, ts: Date.now() };
       return list;
     })
     .finally(() => {
-      inFlight = null;
+      if (inFlight?.token === token) inFlight = null;
     });
+  inFlight = { token, promise };
 
-  return inFlight;
+  return promise;
 }
 
 /** Call after marking a notification read so the next check reflects it immediately, not up to TTL_MS stale. */

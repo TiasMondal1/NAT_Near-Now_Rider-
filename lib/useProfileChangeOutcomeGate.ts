@@ -24,6 +24,10 @@ export type ProfileChangeOutcome = {
 export function useProfileChangeOutcomeGate(isLoggedIn: boolean) {
   const [outcome, setOutcome] = useState<ProfileChangeOutcome | null>(null);
   const dismissingRef = useRef(false);
+  // Ids the rider has already dismissed this session. If the mark-read PUT
+  // fails (flaky network), the server still lists the notification as
+  // unread and the next poll would immediately re-show the same modal.
+  const dismissedIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // getSession()/check() already no-op without a token, but the interval
@@ -41,7 +45,9 @@ export function useProfileChangeOutcomeGate(isLoggedIn: boolean) {
         if (!s?.token || cancelled) return;
         const data = await fetchUnreadNotificationsShared(s.token);
         if (cancelled || !Array.isArray(data)) return;
-        const next = data.find((n) => n.type === "profile_change_reviewed");
+        const next = data.find(
+          (n) => n.type === "profile_change_reviewed" && !dismissedIdsRef.current.has(n.id)
+        );
         if (next) {
           setOutcome({
             notificationId: next.id,
@@ -66,6 +72,7 @@ export function useProfileChangeOutcomeGate(isLoggedIn: boolean) {
     const current = outcome;
     if (!current) return;
     dismissingRef.current = true;
+    dismissedIdsRef.current.add(current.notificationId);
     setOutcome(null);
     try {
       const s: any = await getSession();

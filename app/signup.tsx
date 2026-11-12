@@ -18,8 +18,9 @@ import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
-import { clearSession, getSession, saveSession } from "../session";
+import { getSession, saveSession } from "../session";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
+import { logout } from "../lib/logout";
 import type { VehicleType } from "../lib/riderVerificationDocuments";
 import { peekRiderVerification } from "../lib/riderVerificationCache";
 import { uploadRiderImage } from "../lib/storage";
@@ -150,7 +151,23 @@ export default function SignupScreen() {
     }, [phoneParam, fetchProfile])
   );
 
+  // Synchronous re-entry guard, as in profile.tsx / billing-info.tsx: a double
+  // tap opened the picker twice, expo-image-picker rejects the second one, and
+  // nothing caught it.
+  const pickingImageRef = useRef(false);
   const pickImage = async () => {
+    if (pickingImageRef.current) return;
+    pickingImageRef.current = true;
+    try {
+      await pickImageAndUpload();
+    } catch {
+      Alert.alert("Couldn't open your photos", "Please try again.");
+    } finally {
+      pickingImageRef.current = false;
+    }
+  };
+
+  const pickImageAndUpload = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (permission.status !== "granted") {
       Alert.alert("Permission needed", "Allow photo library access to add your photo.");
@@ -186,6 +203,10 @@ export default function SignupScreen() {
       }
       await apiFetch("/delivery-partner/photo-urls", { method: "PATCH", body: { profile_image_url: res.url } }, session.token);
       setProfileImageUrl(res.url);
+    } catch (e: any) {
+      // Previously unhandled: the photo was in storage but never attached to
+      // the profile, and the rider saw nothing.
+      Alert.alert("Upload failed", e?.message || "Couldn't save your photo. Please try again.");
     } finally {
       setUploadingImage(false);
     }
@@ -201,21 +222,8 @@ export default function SignupScreen() {
   // on the same device would receive this rider's order offers/status
   // pushes until it happened to get overwritten. Same guard profile.tsx
   // already has; this screen and pending-verification.tsx were missed.
-  const clearPushTokenBeforeLogout = async () => {
-    try {
-      const session = await getSession();
-      if (session?.token) {
-        await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
-      }
-    } catch {
-      // Non-fatal — logging out should never be blocked by this.
-    }
-  };
-
   const handleGoBack = async () => {
-    await clearPushTokenBeforeLogout();
-    await clearSession();
-    router.replace("/phone");
+    await logout();
   };
 
   const handleLogout = () => {
@@ -225,9 +233,7 @@ export default function SignupScreen() {
         text: "Logout",
         style: "destructive",
         onPress: async () => {
-          await clearPushTokenBeforeLogout();
-          await clearSession();
-          router.replace("/phone");
+          await logout();
         },
       },
     ]);

@@ -88,6 +88,8 @@ export default function OTPScreen() {
   // the `loading` check twice before the button actually disables. Same
   // pattern/fix as the accept-offer race in the rider home screen.
   const verifyingRef = useRef(false);
+  // Same guard for Resend: a double tap sent (and billed) two OTP SMS.
+  const resendingRef = useRef(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -99,11 +101,22 @@ export default function OTPScreen() {
     ]).start();
   }, [fadeAnim, slideAnim]);
 
+  // Single interval that stops itself at zero. Keying the effect on
+  // `countdown` recreated the interval every second.
+  const countdownActive = countdown > 0;
   useEffect(() => {
-    if (countdown <= 0) return;
-    const timer = setInterval(() => setCountdown((c) => c - 1), 1000);
+    if (!countdownActive) return;
+    const timer = setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
     return () => clearInterval(timer);
-  }, [countdown]);
+  }, [countdownActive]);
 
   const otp = digits.join("");
   const isComplete = otp.length === OTP_LENGTH;
@@ -180,11 +193,20 @@ export default function OTPScreen() {
           // has already succeeded. Treat "couldn't check" as "assume not
           // yet registered" and fall through to the signup branch below,
           // rather than surfacing a false OTP-failure error.
+          // The rider tapped "New User", so on a failed check we still fall
+          // back to the signup path — but retry once first, since sending an
+          // already-registered rider into an editable signup that _layout.tsx
+          // then forces on every navigation is a dead end if the backend
+          // rejects re-signup.
           let registered = false;
-          try {
-            registered = await hasRegisteredRiderProfile(res.token);
-          } catch (checkErr) {
-            console.warn("[otp] hasRegisteredRiderProfile check failed:", checkErr);
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              registered = await hasRegisteredRiderProfile(res.token);
+              break;
+            } catch (checkErr) {
+              console.warn("[otp] hasRegisteredRiderProfile check failed:", checkErr);
+              if (attempt === 0) await new Promise<void>((r) => setTimeout(r, 800));
+            }
           }
           if (registered) {
             try {
@@ -207,7 +229,7 @@ export default function OTPScreen() {
               // logged in. Land on a safe, always-reachable screen instead
               // of reporting a fake OTP failure and clearing their code.
               console.warn("[otp] post-login route resolution failed:", routeErr);
-              router.replace("/documents");
+              router.replace("/(tabs)/home");
               return;
             }
           }
@@ -292,7 +314,7 @@ export default function OTPScreen() {
         // reported (backend login succeeded per session_token_issued_at,
         // but the app showed "Verification Failed").
         console.warn("[otp] post-login route resolution failed:", routeErr);
-        router.replace("/documents");
+        router.replace("/(tabs)/home");
       }
       return;
     } catch (err: unknown) {
@@ -316,7 +338,8 @@ export default function OTPScreen() {
   };
 
   const handleResend = async () => {
-    if (countdown > 0) return;
+    if (countdown > 0 || resendingRef.current) return;
+    resendingRef.current = true;
     try {
       await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
         method: "POST",
@@ -327,6 +350,8 @@ export default function OTPScreen() {
       inputsRef.current[0]?.focus();
     } catch {
       Alert.alert("Error", "Failed to resend code.");
+    } finally {
+      resendingRef.current = false;
     }
   };
 

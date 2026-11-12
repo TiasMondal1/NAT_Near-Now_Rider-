@@ -132,7 +132,9 @@ export default function NotificationsScreen() {
       if (item.type === "new_order" && typeof orderId === "string") {
         router.push({ pathname: "/delivery/[orderId]", params: { orderId } });
       } else if (item.type === "new_order_offer") {
-        router.push("/(tabs)/home");
+        // dismissTo, not push: push stacked a second copy of the tabs (and a
+        // second Home, polling and tracking) on top of this screen.
+        router.dismissTo("/(tabs)/home");
       }
     },
     [markOneRead, router]

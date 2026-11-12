@@ -19,9 +19,11 @@ import * as ImagePicker from "expo-image-picker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
-import { getSession, clearSession } from "../../session";
+import { getSession } from "../../session";
 import { uploadRiderImage } from "../../lib/storage";
-import { stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
+import { logout } from "../../lib/logout";
+import { useDevToolsEnabled } from "../../lib/devTools";
+import BuildVersionLabel from "../../components/BuildVersionLabel";
 
 type Profile = {
   user_id: string;
@@ -64,6 +66,9 @@ export default function ProfileScreen() {
   const savingRef = useRef(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [token, setToken] = useState("");
+  // Developer tools entry (lib/devTools.ts). Always false in a production
+  // build; elsewhere true once the build number below has been tapped 7 times.
+  const devToolsOn = useDevToolsEnabled();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -162,7 +167,10 @@ export default function ProfileScreen() {
     if (!pendingChangeRequest || !token) return;
     const interval = setInterval(() => loadPendingChangeRequest(token), 20_000);
     return () => clearInterval(interval);
-  }, [pendingChangeRequest, token, loadPendingChangeRequest]);
+    // Keyed on the request id, not the object: each poll sets a fresh object,
+    // which tore the interval down and recreated it on every tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChangeRequest?.id, token, loadPendingChangeRequest]);
 
   useEffect(() => {
     (async () => {
@@ -218,7 +226,7 @@ export default function ProfileScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -227,7 +235,10 @@ export default function ProfileScreen() {
     if (result.canceled || !result.assets?.[0]) return;
 
     const session = await getSession();
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !session.token) {
+      Alert.alert("Error", "Couldn't read your session. Please try again.");
+      return;
+    }
 
     setUploadingImage(true);
     try {
@@ -236,10 +247,13 @@ export default function ProfileScreen() {
         Alert.alert("Error", uploadRes.error || "Failed to upload image. Please try again.");
         return;
       }
+      // session.token, not the `token` state: that state is "" if the mount
+      // read failed, and this PATCH would then go out unauthenticated after
+      // the image was already uploaded (orphaned file, generic error).
       await apiFetch(
         "/delivery-partner/photo-urls",
         { method: "PATCH", body: { profile_image_url: uploadRes.url } },
-        token
+        session.token
       );
       setProfile((prev) => (prev ? { ...prev, profile_image_url: uploadRes.url } : prev));
     } catch {
@@ -264,13 +278,19 @@ export default function ProfileScreen() {
     setSaving(true);
     try {
       const session = await getSession();
-      if (!session?.user?.id) {
+      if (!session?.user?.id || !session.token) {
         Alert.alert("Error", "Session expired. Please login again.");
         return;
       }
 
       const patch: Record<string, string> = {};
-      const trimmedName = name.trim() || "Delivery Partner";
+      const trimmedName = name.trim();
+      if (!trimmedName) {
+        // Previously an empty field was silently replaced with "Delivery
+        // Partner" and submitted for admin review as a rename.
+        Alert.alert("Name required", "Please enter your name.");
+        return;
+      }
       if (trimmedName !== (profile?.name ?? "")) patch.name = trimmedName;
       if (trimmedEmail !== (profile?.email ?? "")) patch.email = trimmedEmail;
       if (address.trim() !== (profile?.address ?? "")) patch.address = address.trim();
@@ -299,7 +319,9 @@ export default function ProfileScreen() {
       const res = await apiFetch<{ success: boolean; request: typeof pendingChangeRequest; error?: string }>(
         "/delivery-partner/profile-change-request",
         { method: "POST", body: patch },
-        token
+        // session.token, not the `token` state: that state is "" if the mount
+        // read failed, and this POST would then go out unauthenticated.
+        session.token
       );
       if (!res.success) {
         throw new Error(res.error || "Failed to submit changes");
@@ -354,18 +376,7 @@ export default function ProfileScreen() {
           // on-device indefinitely, since the task's own getSession() guard
           // only silently no-ops per-firing once the token is gone rather
           // than actually stopping itself.
-          try {
-            const session = await getSession();
-            if (session?.token) {
-              await apiFetch("/delivery-partner/status", { method: "PATCH", body: { is_online: false } }, session.token, 0);
-              await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
-            }
-          } catch {
-            // Non-fatal — logging out should never be blocked by this.
-          }
-          await stopBackgroundLocationTracking().catch(() => {});
-          await clearSession();
-          router.replace("/phone");
+          await logout({ markOffline: true });
         },
       },
     ]);
@@ -390,7 +401,10 @@ export default function ProfileScreen() {
           onPress={async () => {
             setLoading(true);
             const session = await getSession();
-            if (session?.token) await fetchProfile(session.token);
+            if (session?.token) {
+              setToken(session.token);
+              await Promise.all([fetchProfile(session.token), loadPendingChangeRequest(session.token)]);
+            }
             setLoading(false);
           }}
         >
@@ -425,7 +439,18 @@ export default function ProfileScreen() {
             <Text style={styles.editChipText}>Edit</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.cancelChip} onPress={() => setEditing(false)} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.cancelChip}
+            onPress={() => {
+              // Revert abandoned edits — otherwise the next Edit shows them
+              // and Save would submit changes the rider thought they cancelled.
+              setName(profile?.name ?? "");
+              setEmail(profile?.email ?? "");
+              setAddress(profile?.address ?? "");
+              setEditing(false);
+            }}
+            activeOpacity={0.8}
+          >
             <Text style={styles.cancelChipText}>Cancel</Text>
           </TouchableOpacity>
         )}
@@ -621,7 +646,23 @@ export default function ProfileScreen() {
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
 
-          <Text style={styles.version}>Near & Now v1.0.0</Text>
+          {devToolsOn && (
+            <TouchableOpacity style={styles.devToolsRow} onPress={() => router.push("/dev-tools")} activeOpacity={0.75}>
+              <View style={styles.quickActionIconWrap}>
+                <MaterialCommunityIcons name="wrench-outline" size={20} color={Colors.accent} />
+              </View>
+              <View style={styles.quickActionCopy}>
+                <Text style={styles.quickActionText}>Developer tools</Text>
+                <Text style={styles.quickActionSubtext}>Functional checks, demo order, test notification</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          )}
+
+          {/* The real installed version and build number (was a hardcoded
+              "v1.0.0"). Seven taps show the developer tools in dev and
+              preview builds; in production it is plain text. */}
+          <BuildVersionLabel style={styles.version} />
         </Animated.View>
       </ScrollView>
       </View>
@@ -863,5 +904,16 @@ const styles = StyleSheet.create({
   saveText: { color: Colors.accentText, fontSize: 16, fontWeight: "700" },
   logoutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, paddingVertical: Spacing.md, borderWidth: 1.5, borderColor: Colors.dangerLight, borderRadius: BorderRadius.md, backgroundColor: Colors.dangerLight },
   logoutText: { color: Colors.danger, fontSize: 15, fontWeight: "600" },
-  version: { color: Colors.textMuted, fontSize: 12, textAlign: "center", marginTop: Spacing.lg },
+  devToolsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    padding: Spacing.lg,
+    marginTop: Spacing.md,
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  version: { marginTop: Spacing.lg },
 });

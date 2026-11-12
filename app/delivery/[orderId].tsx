@@ -22,46 +22,8 @@ import { getSession } from "../../session";
 import { useRiderVerificationGate } from "../../lib/useRiderVerificationGate";
 import { callNumber, openNavigation } from "../../lib/openLink";
 import CodCollectionBox, { isCodSettled, type CodCollection } from "../../components/CodCollectionBox";
-
-function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
-  const R = 6371, r = (d: number) => (d * Math.PI) / 180;
-  const dL = r(lt2 - lt1), dG = r(lg2 - lg1);
-  const a = Math.sin(dL / 2) ** 2 + Math.cos(r(lt1)) * Math.cos(r(lt2)) * Math.sin(dG / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function fmtDist(d: number) {
-  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
-}
-
-function fmtCountdown(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/**
- * Drives a live "wait Xs" countdown from apiFetch's `err.retryAfterSeconds`
- * (the real Retry-After header express-rate-limit sends on a 429) instead of
- * just showing a static "wait 3 minutes" the rider has no way to act on.
- * Found + requested 2026-08-13. `secondsLeft` is null once expired/idle.
- */
-function useRetryCountdown(onExpire?: () => void) {
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
-  const onExpireRef = useRef(onExpire);
-  onExpireRef.current = onExpire;
-  useEffect(() => {
-    if (secondsLeft === null) return;
-    if (secondsLeft <= 0) {
-      onExpireRef.current?.();
-      return;
-    }
-    const id = setTimeout(() => setSecondsLeft((s) => (s !== null ? s - 1 : null)), 1000);
-    return () => clearTimeout(id);
-  }, [secondsLeft]);
-  const start = (seconds: number) => setSecondsLeft(Math.max(1, Math.round(seconds)));
-  return { secondsLeft: secondsLeft && secondsLeft > 0 ? secondsLeft : null, start };
-}
+import { haversineKm, fmtDist } from "../../lib/geo";
+import { useRetryCountdown, fmtCountdown } from "../../lib/useRetryCountdown";
 
 type StoreStop = {
   allocation_id: string;
@@ -80,6 +42,18 @@ type StoreStop = {
   };
   items: { id: string; product_name: string; quantity: number; unit: string }[];
 };
+
+// Order statuses that mean this delivery is over without the rider finishing
+// it. Backend spellings vary across endpoints, so match the common forms.
+const TERMINAL_NOT_OURS_STATUSES = new Set([
+  "cancelled",
+  "canceled",
+  "order_cancelled",
+  "order_canceled",
+  "rejected",
+  "refunded",
+  "failed",
+]);
 
 type ActiveOrder = {
   id: string;
@@ -312,6 +286,10 @@ export default function DeliveryScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [delivering, setDelivering] = useState(false);
+  // Synchronous guard: two quick taps on Mark Delivered opened two confirm
+  // dialogs, and confirming both sent "delivered" twice — the second one
+  // failed and showed an error over a delivery that had actually succeeded.
+  const deliveringRef = useRef(false);
   const [token, setToken] = useState("");
   const [deliveryOtp, setDeliveryOtp] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
@@ -331,6 +309,21 @@ export default function DeliveryScreen() {
   const slideAnim = useRef(new Animated.Value(30)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
+  // Fires once per screen even if several polls notice the same thing.
+  const orderGoneRef = useRef(false);
+  const handleOrderGone = useCallback(
+    (message: string) => {
+      if (orderGoneRef.current) return;
+      orderGoneRef.current = true;
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      Alert.alert("Delivery ended", message, [
+        { text: "OK", onPress: () => router.dismissTo("/(tabs)/home") },
+      ]);
+    },
+    [router]
+  );
+
   const loadSequence = useCallback(
     async (t: string, silent = false) => {
       try {
@@ -340,6 +333,14 @@ export default function DeliveryScreen() {
           t,
           silent ? 0 : 2  // no retries for background polls, keep retries for initial load
         );
+        // The order can end without this rider's involvement: cancelled by
+        // the customer/admin, or reassigned to another rider. Previously the
+        // screen kept showing the pickup sequence and let the rider carry on
+        // collecting items. Stop here and send them back to Home.
+        if (TERMINAL_NOT_OURS_STATUSES.has(String(res.order?.status ?? "").toLowerCase())) {
+          handleOrderGone("This order was cancelled. You've been returned to Home.");
+          return;
+        }
         setOrder(res.order);
         setStops(res.stops);
         setLoadError(false);
@@ -355,7 +356,14 @@ export default function DeliveryScreen() {
             Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
           ]).start();
         }
-      } catch {
+      } catch (err: any) {
+        // 403/404 on an order we were mid-delivery on means it is no longer
+        // assigned to this rider (reassigned, or deleted). Not a transient
+        // failure — don't just show the "may be outdated" banner.
+        if (silent && (err?.status === 403 || err?.status === 404)) {
+          handleOrderGone("This order is no longer assigned to you. You've been returned to Home.");
+          return;
+        }
         if (!silent) {
           // The initial (non-silent) load failing left `order` null forever
           // with no way out but an OS-level back gesture — this screen's own
@@ -364,8 +372,9 @@ export default function DeliveryScreen() {
           // notifications) has a "Couldn't load — Try Again" state for
           // exactly this; this one didn't. Found 2026-09-01 during a
           // cross-app audit.
+          // The full-screen "Couldn't load this order" state below already
+          // tells the rider what happened; a second Alert on top was noise.
           setLoadError(true);
-          Alert.alert("Error", "Failed to load order.");
         } else {
           // Background polls fail silently by design, but 2+ in a row means the
           // pickup-sequence/OTP state on screen could be stale — surface a
@@ -378,12 +387,14 @@ export default function DeliveryScreen() {
       setLoading(false);
       setRefreshing(false);
     },
-    [orderId, slideAnim, fadeAnim]
+    [orderId, slideAnim, fadeAnim, handleOrderGone]
   );
 
   const refreshLocation = useCallback(async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      // get*, not request*: this runs on a 10s timer, and request* would
+      // re-prompt a rider who denied permission on every tick (Android).
+      const { status } = await Location.getForegroundPermissionsAsync();
       if (status !== "granted") return;
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setDriverLat(loc.coords.latitude);
@@ -408,7 +419,14 @@ export default function DeliveryScreen() {
         // this screen on its spinner with no recovery. Found 2026-08-26
         // during a crash-risk audit; mirrors (tabs)/profile.tsx's handling
         // of the same case.
+        //
+        // setLoading(false) alone was not enough: the render guard below is
+        // `loading || !order`, and `order` is still null, so the spinner
+        // stayed. Surface the "Couldn't load — Try Again" state instead;
+        // its retry re-reads the session (see onPress) rather than calling
+        // loadSequence with an empty token.
         setLoading(false);
+        setLoadError(true);
         return;
       }
       setToken(session.token);
@@ -460,12 +478,15 @@ export default function DeliveryScreen() {
     !!order?.cod_collection && (order.amount_to_collect ?? 0) > 0 && !isCodSettled(order.cod_collection);
 
   const markDelivered = async () => {
+    if (deliveringRef.current) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert("Confirm Delivery", "Mark this order as delivered to the customer?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Yes, Delivered",
         onPress: async () => {
+          if (deliveringRef.current) return;
+          deliveringRef.current = true;
           setDelivering(true);
           try {
             await apiFetch(`/delivery-partner/orders/${orderId}/delivered`, { method: "POST" }, token);
@@ -473,8 +494,10 @@ export default function DeliveryScreen() {
             await loadSequence(token);
           } catch {
             Alert.alert("Error", "Failed to update order status.");
+          } finally {
+            deliveringRef.current = false;
+            setDelivering(false);
           }
-          setDelivering(false);
         },
       },
     ]);
@@ -522,7 +545,16 @@ export default function DeliveryScreen() {
         <Text style={styles.loadErrorSub}>Check your connection and try again.</Text>
         <TouchableOpacity
           style={styles.loadErrorRetryBtn}
-          onPress={() => { setLoadError(false); setLoading(true); loadSequence(token); }}
+          onPress={async () => {
+            setLoadError(false);
+            setLoading(true);
+            // `token` may be "" if the initial session read failed — re-read
+            // it instead of firing an unauthenticated request.
+            const t = token || (await getSession())?.token;
+            if (!t) { setLoading(false); setLoadError(true); return; }
+            if (t !== token) setToken(t);
+            loadSequence(t);
+          }}
         >
           <Text style={styles.loadErrorRetryText}>Try Again</Text>
         </TouchableOpacity>
@@ -602,7 +634,12 @@ export default function DeliveryScreen() {
               <Text style={styles.completedTitle}>Order Delivered!</Text>
               <TouchableOpacity
                 style={styles.primaryBtn}
-                onPress={() => router.replace("/(tabs)/home")}
+                // dismissTo, not replace: this screen sits on top of the tabs,
+                // and replace() swapped it for a SECOND copy of the tabs while
+                // the first stayed mounted underneath. Every finished delivery
+                // added another Home, each with its own GPS watcher and polls,
+                // and the back button walked through them one by one.
+                onPress={() => router.dismissTo("/(tabs)/home")}
               >
                 <MaterialCommunityIcons name="home" size={18} color={Colors.accentText} />
                 <Text style={styles.primaryBtnText}>Back to Home</Text>

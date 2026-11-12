@@ -13,26 +13,32 @@ export const API_CONFIG = {
       extra.apiBaseUrl ||
       defaultApiBase
   ),
-  PROXY_TARGET:
-    process.env.VITE_API_PROXY_TARGET || extra.apiProxyTarget || "http://127.0.0.1:3000",
+  PROXY_TARGET: extra.apiProxyTarget || "http://127.0.0.1:3000",
 } as const;
+
+/**
+ * Which kind of build this is: "development" (dev client), "preview" (tester
+ * release, developer tools included) or "production". A release is production
+ * unless it was built with EXPO_PUBLIC_ENV=preview — see lib/devToolsRules.ts.
+ */
+export const APP_ENV: string =
+  process.env.EXPO_PUBLIC_ENV || extra.environment || (__DEV__ ? "development" : "production");
 
 // Supabase Configuration
 export const SUPABASE_CONFIG = {
   URL: normalizeUrl(
     process.env.EXPO_PUBLIC_SUPABASE_URL ||
-      process.env.VITE_SUPABASE_URL ||
       extra.supabaseUrl ||
       ""
   ),
   ANON_KEY:
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
     extra.supabaseAnonKey ||
     "",
 } as const;
 
-// Admins a rider can call for verification/support help.
+// FALLBACK admin contacts, used only when GET /delivery-partner/support-contacts
+// is unavailable — see lib/supportContacts.ts. Prefer updating the backend list.
 export const ADMIN_CONTACTS = [
   { name: "Tias Mondal", phone: "+919062692914" },
   { name: "Rounak Jana", phone: "+919836307146" },

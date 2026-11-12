@@ -11,34 +11,20 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { createClient } from "@supabase/supabase-js";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
-import { clearSession, getSession } from "../session";
+import { getSession } from "../session";
 import { apiFetch } from "../constants/api";
 import { restoreRiderRealtimeSession } from "../lib/riderRealtimeAuth";
 import { useRiderVerificationGate } from "../lib/useRiderVerificationGate";
 import { isVehicleRegistrationRequired, REQUIRED_DOC_KEYS, type RequiredDocKey } from "../lib/riderVerificationDocuments";
 import { fetchBillingInfo } from "../lib/billingInfo";
-import { ADMIN_CONTACTS, formatPhoneForDisplay, SUPABASE_CONFIG } from "../constants/config";
+import { formatPhoneForDisplay } from "../constants/config";
+import { supabase } from "../lib/supabase";
+import { useSupportContacts } from "../lib/supportContacts";
+import { logout } from "../lib/logout";
 import VerificationNavBar from "../components/VerificationNavBar";
 import { callNumber } from "../lib/openLink";
 
-// A dedicated client, NOT the shared one from lib/supabase.ts (which
-// lib/storage.ts's uploadRiderImage() also uses — it now uploads with a
-// backend-issued token, so it no longer depends on the anon role, but other
-// anon-role reads through the shared client still do). restoreRiderRealtimeSession() below calls client.auth.setSession()
-// to mint a real Supabase Auth session for Realtime — on a shared client,
-// that silently flips every subsequent request's effective role from `anon`
-// to `authenticated`. The delivery_partner_image/delivery_partner_vehicle
-// storage buckets only grant `anon` a write policy (no `authenticated`
-// policy exists), so any photo upload made through the poisoned shared
-// client after this screen ran would fail with a real row-level-security
-// violation — this screen is the one every new/unapproved rider sits on
-// while awaiting approval, so new riders hit it consistently. home.tsx
-// already avoids this by creating its own independent client for the same
-// reason; this mirrors that pattern. Found 2026-08-14 from a direct user
-// report ("new riders keep getting row level errors... when uploading pics").
-const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
 
 const STEPS = [
   { key: "upload", label: "Upload documents", icon: "cloud-upload-outline" as const },
@@ -61,6 +47,7 @@ const DOC_LABELS: Record<RequiredDocKey, string> = {
 };
 
 export default function PendingVerificationScreen() {
+  const supportContacts = useSupportContacts();
   const router = useRouter();
   // The gate hook is already the single source of truth for profile/doc
   // state — it fetches on mount, on every screen focus, and every 30s. This
@@ -167,7 +154,10 @@ export default function PendingVerificationScreen() {
 
     return () => {
       cancelled = true;
-      realtimeChannelRef.current?.unsubscribe();
+      // removeChannel (not just unsubscribe) so the channel object is also
+      // dropped from the client's list — this screen is remounted on every
+      // nav-bar bounce and was accumulating channels for the app's lifetime.
+      if (realtimeChannelRef.current) void supabase.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
     };
   }, [refresh, checkBillingStatus]);
@@ -185,16 +175,7 @@ export default function PendingVerificationScreen() {
           // would receive this rider's order offers/status pushes until it
           // happened to get overwritten. Same guard profile.tsx already
           // has; this screen and signup.tsx were missed.
-          try {
-            const session = await getSession();
-            if (session?.token) {
-              await apiFetch("/delivery-partner/push-token", { method: "PATCH", body: { expo_push_token: null } }, session.token);
-            }
-          } catch {
-            // Non-fatal — logging out should never be blocked by this.
-          }
-          await clearSession();
-          router.replace("/phone");
+          await logout();
         },
       },
     ]);
@@ -211,7 +192,8 @@ export default function PendingVerificationScreen() {
     );
   }
 
-  const currentStep = verified ? 3 : billingComplete ? 2 : hasSubmittedDocs ? 1 : 0;
+  // Billing alone must not mark "Upload documents" as done.
+  const currentStep = verified ? 3 : hasSubmittedDocs && billingComplete ? 2 : hasSubmittedDocs ? 1 : 0;
   const status = profile?.status || "pending_verification";
   const isSuspended = status === "suspended" || status === "offboarded";
 
@@ -379,7 +361,7 @@ export default function PendingVerificationScreen() {
 
           <View style={styles.helpCard}>
             <Text style={styles.sectionTitle}>Contact an admin</Text>
-            {ADMIN_CONTACTS.map((admin) => (
+            {supportContacts.map((admin) => (
               <TouchableOpacity
                 key={admin.phone}
                 style={styles.adminRow}

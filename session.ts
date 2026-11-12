@@ -13,8 +13,6 @@ export type UserSession = {
   /** OTP verified but /signup/complete not finished yet */
   needsSignupCompletion?: boolean;
   signupTicket?: string;
-  /** Local flag set after successful KYC document upload */
-  documentsSubmitted?: boolean;
   /**
    * A real, narrowly-scoped Supabase Auth session minted by the backend at
    * login (see backend/src/services/riderAuthBridge.service.ts) — used only
@@ -40,7 +38,17 @@ export type UserSession = {
 // undefined = not yet loaded; null = loaded, no session.
 let _cache: UserSession | null | undefined = undefined;
 
+// Set when the most recent getSession() returned null because the token
+// could not be READ (transient SecureStore failure), as opposed to there
+// genuinely being no session. Callers that would otherwise treat null as
+// "logged out" (redirect to /phone) should check this and skip that cycle.
+let _lastReadFailed = false;
+export function lastSessionReadFailed(): boolean {
+  return _lastReadFailed;
+}
+
 export async function getSession(): Promise<UserSession | null> {
+  _lastReadFailed = false;
   if (_cache !== undefined) return _cache;
   const raw = await AsyncStorage.getItem(SESSION_KEY);
   if (!raw) { _cache = null; return null; }
@@ -92,6 +100,7 @@ export async function getSession(): Promise<UserSession | null> {
       // stored state; leave `_cache` as `undefined` so the very next call
       // (there will be one soon, given how often this runs) gets a full
       // fresh attempt rather than a cached negative.
+      _lastReadFailed = true;
       return null;
     }
 
@@ -101,11 +110,16 @@ export async function getSession(): Promise<UserSession | null> {
     }
 
     let supabaseSession: UserSession['supabaseSession'];
+    let supabaseReadFailed = false;
     try {
       const raw = await SecureStore.getItemAsync(SUPABASE_SESSION_KEY);
       if (raw) supabaseSession = JSON.parse(raw);
     } catch {
-      supabaseSession = undefined;
+      // Same Keystore-hiccup class as the token read above. Don't cache the
+      // result: caching `undefined` here silently disabled Realtime for the
+      // rest of the runtime. Return this call's session but let the next
+      // call re-read.
+      supabaseReadFailed = true;
     }
 
     const session: UserSession = { ...(rest as Omit<UserSession, 'token'>), token, supabaseSession };
@@ -114,10 +128,12 @@ export async function getSession(): Promise<UserSession | null> {
       await clearSession();
       return null;
     }
-    _cache = session;
-    return _cache;
+    if (!supabaseReadFailed) _cache = session;
+    return session;
   } catch {
-    _cache = null;
+    // Corrupt AsyncStorage blob — clear it so every launch doesn't re-parse
+    // the same garbage and behave as logged-out while leaving it in place.
+    await clearSession();
     return null;
   }
 }

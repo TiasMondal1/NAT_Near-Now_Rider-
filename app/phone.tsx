@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,9 @@ import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../constants/theme";
 import { apiFetch } from "../constants/api";
+import { saveSession } from "../session";
+import { DEV_TOOLS_AVAILABLE, clearDemoSession, loadDemoSession, useDevToolsEnabled } from "../lib/devTools";
+import BuildVersionLabel from "../components/BuildVersionLabel";
 
 export default function PhoneScreen() {
   const router = useRouter();
@@ -24,6 +27,59 @@ export default function PhoneScreen() {
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [selectedFlow, setSelectedFlow] = useState<"existing" | "new" | null>(null);
+  // Synchronous guard for both buttons: the `disabled` prop only applies
+  // after a re-render, so two quick taps each sent an OTP SMS (and opened
+  // two OTP screens).
+  const sendingRef = useRef(false);
+
+  // Developer tools (lib/devTools.ts) — dev and preview builds only. A saved
+  // real login can be restored here without another OTP SMS.
+  const devToolsOn = useDevToolsEnabled();
+  const [demoName, setDemoName] = useState<string | null>(null);
+  const [demoBusy, setDemoBusy] = useState(false);
+  useEffect(() => {
+    if (!devToolsOn) {
+      setDemoName(null);
+      return;
+    }
+    let cancelled = false;
+    void loadDemoSession().then((s) => {
+      if (!cancelled) setDemoName(s ? s.user.name || "Saved rider" : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [devToolsOn]);
+
+  const restoreSavedLogin = useCallback(async () => {
+    if (demoBusy) return;
+    setDemoBusy(true);
+    try {
+      const saved = await loadDemoSession();
+      if (!saved) {
+        setDemoName(null);
+        return;
+      }
+      // Make sure the server still accepts the token before signing in with it.
+      try {
+        await apiFetch("/delivery-partner/profile", {}, saved.token, 0);
+      } catch (err: any) {
+        if (err?.status === 401) {
+          await clearDemoSession();
+          setDemoName(null);
+          Alert.alert("Saved login expired", "Log in with OTP once, then save the login again from Developer tools.");
+        } else {
+          Alert.alert("Couldn't reach the server", "Check your connection and try again.");
+        }
+        return;
+      }
+      await saveSession(saved);
+      // The splash screen works out where this rider belongs.
+      router.replace("/");
+    } finally {
+      setDemoBusy(false);
+    }
+  }, [demoBusy, router]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -39,12 +95,18 @@ export default function PhoneScreen() {
     ]).start();
   }, [fadeAnim, slideAnim, logoScale]);
 
-  const isValid = phone.replace(/\s/g, "").length === 10;
-  const fullPhone = `+91${phone.replace(/\s/g, "")}`;
+  // Indian mobile: exactly 10 digits starting 6-9. The phone-pad keyboard
+  // also offers + # * ( ), so strip everything non-numeric before checking —
+  // previously "+91123456" passed a bare length check and was sent as
+  // "+91+91123456".
+  const digits = phone.replace(/\D/g, "");
+  const isValid = /^[6-9]\d{9}$/.test(digits);
+  const fullPhone = `+91${digits}`;
   const disabled = !isValid || checkingExisting || registering;
 
   const handleExistingUser = async () => {
-    if (!isValid) return;
+    if (!isValid || sendingRef.current) return;
+    sendingRef.current = true;
     setCheckingExisting(true);
     try {
       const res = await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
@@ -61,12 +123,14 @@ export default function PhoneScreen() {
       const error = err as { message?: string };
       Alert.alert("Error", error?.message || "Unable to send OTP right now.");
     } finally {
+      sendingRef.current = false;
       setCheckingExisting(false);
     }
   };
 
   const handleNewRegistration = async () => {
-    if (!isValid) return;
+    if (!isValid || sendingRef.current) return;
+    sendingRef.current = true;
     setRegistering(true);
     try {
       const res = await apiFetch<{ success: boolean }>("/api/auth/send-otp", {
@@ -82,6 +146,7 @@ export default function PhoneScreen() {
       const error = err as { message?: string };
       Alert.alert("Error", error?.message || "Unable to send OTP right now.");
     } finally {
+      sendingRef.current = false;
       setRegistering(false);
     }
   };
@@ -214,6 +279,33 @@ export default function PhoneScreen() {
             <Text style={styles.terms}>
               Existing users must already be registered. New users register first, then upload documents for verification.
             </Text>
+
+            {DEV_TOOLS_AVAILABLE && (
+              <View style={styles.devArea}>
+                {demoName && (
+                  <TouchableOpacity
+                    style={[styles.devButton, demoBusy && styles.buttonDisabled]}
+                    onPress={restoreSavedLogin}
+                    disabled={demoBusy}
+                    activeOpacity={0.8}
+                  >
+                    {demoBusy ? (
+                      <ActivityIndicator color={Colors.accent} size="small" />
+                    ) : (
+                      <MaterialCommunityIcons name="key-outline" size={16} color={Colors.accent} />
+                    )}
+                    <Text style={styles.devButtonText}>Use saved demo login ({demoName})</Text>
+                  </TouchableOpacity>
+                )}
+                {devToolsOn && (
+                  <TouchableOpacity style={styles.devButton} onPress={() => router.push("/dev-tools")} activeOpacity={0.8}>
+                    <MaterialCommunityIcons name="wrench-outline" size={16} color={Colors.accent} />
+                    <Text style={styles.devButtonText}>Developer tools</Text>
+                  </TouchableOpacity>
+                )}
+                <BuildVersionLabel />
+              </View>
+            )}
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -279,4 +371,19 @@ const styles = StyleSheet.create({
   backLink: { alignItems: "center", marginTop: Spacing.md },
   backLinkText: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },
   terms: { color: Colors.textMuted, fontSize: 12, textAlign: "center", marginTop: Spacing.lg },
+  devArea: { marginTop: Spacing.xl, gap: Spacing.sm, alignItems: "center" },
+  devButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    alignSelf: "stretch",
+    minHeight: 44,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  devButtonText: { color: Colors.accent, fontSize: 13, fontWeight: "700", flexShrink: 1 },
 });

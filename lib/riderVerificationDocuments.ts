@@ -1,4 +1,4 @@
-import { apiFetch, API_BASE } from "../constants/api";
+import { apiFetch, API_BASE, handleUnauthorized } from "../constants/api";
 
 export const REQUIRED_DOC_KEYS = [
   "aadhaar_front", "aadhaar_back",
@@ -114,6 +114,12 @@ export async function saveVerificationDocument(
       headers: { Authorization: `Bearer ${token}` },
       body: form,
     });
+    if (res.status === 401) {
+      // Raw fetch (multipart) bypasses apiFetch's expiry handling — without
+      // this an expired token just reads "Failed to save document" forever.
+      await handleUnauthorized();
+      return { ok: false, error: "Session expired. Please log in again." };
+    }
     const json = await res.json().catch(() => null);
     if (!res.ok || !json?.success) {
       return { ok: false, error: json?.error || "Failed to save document" };

@@ -37,6 +37,11 @@ import { fetchRiderProfile } from "../lib/riderVerification";
 import { peekRiderVerification } from "../lib/riderVerificationCache";
 import VerificationNavBar from "../components/VerificationNavBar";
 
+// Returned by saveOne when a document was attempted but did not save
+// (validation or upload failure), so handleSaveAll can report honestly
+// instead of showing "Saved" over per-document alerts that Android replaces.
+const SAVE_FAILED = Symbol("save-failed");
+
 const DOCUMENT_SECTIONS = [
   { key: "aadhaar_front", label: "Aadhaar Card (Front)", icon: "card-account-details-outline" as const, placeholder: "12-digit Aadhaar number", hasNumber: true },
   { key: "aadhaar_back", label: "Aadhaar Card (Back)", icon: "card-account-details-outline" as const, placeholder: "", hasNumber: false },
@@ -261,6 +266,22 @@ export default function DocumentsScreen() {
     });
   };
 
+  // One picker at a time. The three options below close the sheet and open a
+  // system picker; a second tap before the sheet had closed started another,
+  // which the picker modules reject — and that rejection was unhandled.
+  const pickingRef = useRef(false);
+  const runPicker = async (pick: (key: DocKey) => Promise<void>, key: DocKey) => {
+    if (pickingRef.current) return;
+    pickingRef.current = true;
+    try {
+      await pick(key);
+    } catch {
+      Alert.alert("Couldn't open the picker", "Please try again.");
+    } finally {
+      pickingRef.current = false;
+    }
+  };
+
   // Every document, including the 3 vehicle photos, offers a choice between
   // an image and a PDF via pickerSheetKey below.
   const [pickerSheetKey, setPickerSheetKey] = useState<DocKey | null>(null);
@@ -268,8 +289,13 @@ export default function DocumentsScreen() {
     setPickerSheetKey(key);
   };
 
-  const saveOne = async (key: DocKey): Promise<VerificationDocument | null> => {
-    if (!token) return null;
+  const saveOne = async (key: DocKey): Promise<VerificationDocument | null | typeof SAVE_FAILED> => {
+    // The screen can be seeded from cache with `loading` false before the
+    // async getSession() in loadDocuments has populated `token` — read it
+    // here rather than silently no-op'ing every save in that window.
+    const authToken = token ?? (await getSession())?.token ?? null;
+    if (!authToken) return SAVE_FAILED;
+    if (authToken !== token) setToken(authToken);
     // `autoCapitalize="characters"` on the input is only a keyboard hint —
     // paste/autofill can still land lowercase characters in state — so the
     // value that gets format-validated and the value that gets persisted
@@ -281,20 +307,21 @@ export default function DocumentsScreen() {
     if (!file && (number ?? "") === (current?.number ?? "")) return current; // nothing changed
 
     if (number && !validateDocNumber(key, number)) {
+      setFailedKeys((prev) => new Set(prev).add(key));
       Alert.alert("Invalid number", docNumberErrorMessage(key));
-      return current;
+      return SAVE_FAILED;
     }
 
     setSavingKey(key);
     try {
-      const res = await saveVerificationDocument(token, key, {
+      const res = await saveVerificationDocument(authToken, key, {
         number: number || undefined,
         file,
       });
       if (!res.ok) {
         setFailedKeys((prev) => new Set(prev).add(key));
         Alert.alert("Upload failed", res.error);
-        return current;
+        return SAVE_FAILED;
       }
       setFailedKeys((prev) => {
         if (!prev.has(key)) return prev;
@@ -302,7 +329,10 @@ export default function DocumentsScreen() {
         next.delete(key);
         return next;
       });
-      const mergedDoc = { ...res.document, url: res.document.url ?? current?.url ?? file?.uri ?? null };
+      // Only trust URLs the server returned (or already had). A local
+      // picker URI would make the card look uploaded ("Delete uploaded
+      // file", counts toward submission) when nothing is on the server.
+      const mergedDoc = { ...res.document, url: res.document.url ?? current?.url ?? null };
       setServerDocs((prev) => ({ ...prev, [key]: mergedDoc }));
       setPendingFiles((prev) => {
         const next = { ...prev };
@@ -366,10 +396,16 @@ export default function DocumentsScreen() {
 
   const handleSaveAll = async () => {
     if (!vehicleType) {
-      Alert.alert(
-        "Vehicle type missing",
-        "Your account is missing a vehicle type. Please contact support to resolve this before submitting."
-      );
+      // null both when the account truly lacks one and when the profile
+      // fetch failed — don't blame the account for a network error.
+      if (!docsFetchedRef.current) {
+        Alert.alert("Couldn't load your profile", "Check your connection and pull to refresh, then try again.");
+      } else {
+        Alert.alert(
+          "Vehicle type missing",
+          "Your account is missing a vehicle type. Please contact support to resolve this before submitting."
+        );
+      }
       return;
     }
     setSaving(true);
@@ -377,14 +413,27 @@ export default function DocumentsScreen() {
     try {
       const keysToSave = groups.flatMap((g) => g.members);
       const results: Partial<Record<DocKey, VerificationDocument | null>> = {};
+      const failed: DocKey[] = [];
       for (const key of keysToSave) {
-        results[key] = await saveOne(key);
+        const r = await saveOne(key);
+        if (r === SAVE_FAILED) failed.push(key);
+        else results[key] = r;
       }
       if (suspendedRef.current) {
         Alert.alert(
           "Sent back for re-verification",
           "Editing an approved document means your account needs to be re-verified.",
           [{ text: "OK", onPress: () => router.replace("/pending-verification") }]
+        );
+        return;
+      }
+      if (failed.length > 0) {
+        const labels = failed
+          .map((k) => DOCUMENT_SECTIONS.find((d) => d.key === k)?.label ?? k)
+          .join(", ");
+        Alert.alert(
+          "Some documents weren't saved",
+          `${labels}: check the number or file and try again.`
         );
         return;
       }
@@ -650,7 +699,7 @@ export default function DocumentsScreen() {
               onPress={() => {
                 const key = pickerSheetKey;
                 setPickerSheetKey(null);
-                if (key) takePhoto(key);
+                if (key) void runPicker(takePhoto, key);
               }}
             >
               <MaterialCommunityIcons name="camera-outline" size={20} color={Colors.accent} />
@@ -662,7 +711,7 @@ export default function DocumentsScreen() {
               onPress={() => {
                 const key = pickerSheetKey;
                 setPickerSheetKey(null);
-                if (key) pickImage(key);
+                if (key) void runPicker(pickImage, key);
               }}
             >
               <MaterialCommunityIcons name="image-outline" size={20} color={Colors.accent} />
@@ -674,7 +723,7 @@ export default function DocumentsScreen() {
               onPress={() => {
                 const key = pickerSheetKey;
                 setPickerSheetKey(null);
-                if (key) pickPdf(key);
+                if (key) void runPicker(pickPdf, key);
               }}
             >
               <MaterialCommunityIcons name="file-pdf-box" size={20} color={Colors.accent} />

@@ -26,10 +26,10 @@ const googleServicesFilePath =
 const hasGoogleServicesFile = fs.existsSync(googleServicesFilePath);
 
 module.exports = () => {
-  const googleMapsApiKey =
-    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
-    process.env.VITE_GOOGLE_MAPS_API_KEY ||
-    "";
+  // Only EXPO_PUBLIC_* vars are read. VITE_* fallbacks (copied from the web
+  // app's env) were removed so a backend/web .env pasted here can't leak its
+  // values into the APK.
+  const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
   // No EAS project was ever linked for this app until 2026-08-25 (confirmed
   // via `eas credentials -p android` reporting "EAS project not configured")
   // — with no projectId anywhere, getExpoPushTokenAsync() (called with no
@@ -51,13 +51,14 @@ module.exports = () => {
       scheme: "nearandnow-delivery",
       version: "1.0.0",
       orientation: "portrait",
-      icon: "./Rider_Logo_nearNow.png",
+      icon: "./assets/images/icon.png",
       userInterfaceStyle: "dark",
       newArchEnabled: true,
       splash: {
-        image: "./Rider_Logo_nearNow.png",
+        image: "./assets/images/icon.png",
         resizeMode: "contain",
-        backgroundColor: "#FFFFFF",
+        // Matches the logo tile's own cream so the splash reads as one surface.
+        backgroundColor: "#FEF1DA",
       },
       ios: {
         supportsTablet: false,
@@ -72,7 +73,12 @@ module.exports = () => {
         },
       },
       android: {
-        icon: "./Rider_Logo_nearNow.png",
+        // Adaptive icon: foreground is the logo content on transparent, sized
+        // for the 66% safe zone; Android masks it to the launcher shape.
+        adaptiveIcon: {
+          foregroundImage: "./assets/images/adaptive-icon.png",
+          backgroundColor: "#FEF1DA",
+        },
         edgeToEdgeEnabled: true,
         package: "com.nearandnow.rider",
         // Firebase Android config for this app (package com.nearandnow.rider)
@@ -85,7 +91,11 @@ module.exports = () => {
         // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
         // absolute path elsewhere on the build machine.
         ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-        versionCode: 8,
+        // Source of truth for Play releases is EAS ("appVersionSource":
+        // "remote" + autoIncrement in eas.json) — EAS ignores this value. It
+        // only applies to LOCAL `npm run build:apk` / `build:aab` artifacts;
+        // override with ANDROID_VERSION_CODE when cutting one of those.
+        versionCode: Number(process.env.ANDROID_VERSION_CODE) || 8,
         config: {
           googleMaps: {
             apiKey: googleMapsApiKey,
@@ -94,7 +104,7 @@ module.exports = () => {
         permissions: ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       },
       web: {
-        favicon: "./Rider_Logo_nearNow.png",
+        favicon: "./assets/images/icon.png",
       },
       plugins: [
         "expo-router",
@@ -119,7 +129,10 @@ module.exports = () => {
         [
           "expo-notifications",
           {
-            icon: "./Rider_Logo_nearNow.png",
+            // Android status-bar icons are alpha-only: a full-colour logo
+            // renders as a white square. This is a white-on-transparent
+            // silhouette generated from the logo (assets/notification-icon.png).
+            icon: "./assets/notification-icon.png",
             color: "#000000",
             defaultChannel: "orders_v2",
             sounds: ["./assets/sounds/order_chime.wav"],
@@ -130,16 +143,15 @@ module.exports = () => {
         apiBaseUrl:
           process.env.EXPO_PUBLIC_API_BASE_URL ||
           "https://near-and-now-backend.vercel.app",
-        apiProxyTarget: process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3000",
-        supabaseUrl:
-          process.env.EXPO_PUBLIC_SUPABASE_URL ||
-          process.env.VITE_SUPABASE_URL ||
-          "",
-        supabaseAnonKey:
-          process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-          process.env.VITE_SUPABASE_ANON_KEY ||
-          "",
+        apiProxyTarget: process.env.EXPO_PUBLIC_API_PROXY_TARGET || "http://127.0.0.1:3000",
+        supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
+        supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
         googleMapsApiKey,
+        // Crash reporting is off unless a DSN is provided (lib/crashReporting.ts).
+        sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN || "",
+        // "preview" builds carry the developer tools (lib/devToolsRules.ts).
+        // Empty means: development in a dev client, production in a release.
+        environment: process.env.EXPO_PUBLIC_ENV || "",
         eas: {
           ...(easProjectId ? { projectId: easProjectId } : {}),
         },

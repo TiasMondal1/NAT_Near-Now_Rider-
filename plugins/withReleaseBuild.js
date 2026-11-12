@@ -222,6 +222,14 @@ function withReleaseFiles(config) {
       const srcKeystore = path.join(credDir, "release.keystore");
       if (fs.existsSync(srcKeystore)) {
         fs.copyFileSync(srcKeystore, path.join(appDir, "release.keystore"));
+      } else if (process.env.CI && !process.env.EAS_BUILD && process.env.ALLOW_DEBUG_SIGNING !== "1") {
+        // On a CI runner that is NOT EAS (EAS injects its own keystore), a
+        // missing release keystore must fail the build rather than silently
+        // emit a debug-signed artifact.
+        throw new Error(
+          "[withReleaseBuild] credentials/release.keystore not found on CI — refusing to fall back to debug signing. " +
+            "Provide the keystore or set ALLOW_DEBUG_SIGNING=1."
+        );
       } else {
         console.warn("[withReleaseBuild] credentials/release.keystore not found — release build will fall back to debug signing.");
       }

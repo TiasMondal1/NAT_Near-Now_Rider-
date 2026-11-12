@@ -53,3 +53,8 @@ Thumbs.db
 .env.local
 # Firebase Android app config — contains project identifiers, not committed
 google-services.json
+
+# Play Console service account (referenced by eas.json submit) — never commit
+google-service-account.json
+# Editor / agent scratch config
+.clock/

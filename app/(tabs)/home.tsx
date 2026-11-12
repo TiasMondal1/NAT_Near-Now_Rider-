@@ -17,11 +17,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
-import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
-import { SUPABASE_CONFIG, ADMIN_CONTACTS, formatPhoneForDisplay } from "../../constants/config";
+import { formatPhoneForDisplay } from "../../constants/config";
+import { supabase } from "../../lib/supabase";
+import { useSupportContacts } from "../../lib/supportContacts";
+import { haversineKm, fmtDist } from "../../lib/geo";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
 import { startBackgroundLocationTracking, stopBackgroundLocationTracking } from "../../lib/backgroundLocationTask";
@@ -30,8 +32,7 @@ import { fetchUnreadNotificationsShared } from "../../lib/unreadNotificationsCac
 import { useRiderOrderPolling } from "../../lib/useRiderOrderPolling";
 import LocationPermissionModal from "../../components/LocationPermissionModal";
 import { callNumber } from "../../lib/openLink";
-
-const supabase = createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.ANON_KEY);
+import { onDemoOrdersChanged } from "../../lib/devTools";
 
 // "Ignore" is a soft, personal, this-device-only dismissal — not a real
 // business-level rejection (other riders still see the offer, and it still
@@ -81,24 +82,23 @@ type ActiveOrder = {
   placed_at: string;
 };
 
+/**
+ * Stop a GPS watcher without letting a failure escape. These calls sit in
+ * effect cleanups, where a throw takes down the whole screen: expo-location's
+ * web build throws from remove(), so leaving Home while online (logout,
+ * session expiry) landed on the crash screen there.
+ */
+function removeLocationWatch(sub: Location.LocationSubscription | null): void {
+  try {
+    sub?.remove();
+  } catch (err) {
+    console.warn("[home] stopping the location watch failed:", err);
+  }
+}
+
 function formatTime(dateStr: string) {
   const d = new Date(dateStr);
   return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-}
-
-function haversineKm(lt1: number, lg1: number, lt2: number, lg2: number) {
-  const R = 6371,
-    r = (d: number) => (d * Math.PI) / 180;
-  const dL = r(lt2 - lt1),
-    dG = r(lg2 - lg1);
-  const a =
-    Math.sin(dL / 2) ** 2 +
-    Math.cos(r(lt1)) * Math.cos(r(lt2)) * Math.sin(dG / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function fmtDist(d: number) {
-  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
 }
 
 export default function HomeScreen() {
@@ -115,6 +115,10 @@ export default function HomeScreen() {
   // profile fetch below sets the real value.
   const [isApproved, setIsApproved] = useState(true);
   const [toggling, setToggling] = useState(false);
+  // Synchronous guard, same reason as acceptingRef below: two taps on Go
+  // Online in one frame both passed the `toggling` state check and sent the
+  // status change twice.
+  const togglingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -142,6 +146,7 @@ export default function HomeScreen() {
   const consecutiveActiveOrderFailuresRef = useRef(0);
   const [pollingDegraded, setPollingDegraded] = useState(false);
   const [token, setToken] = useState("");
+  const supportContacts = useSupportContacts(token);
   const [userName, setUserName] = useState("");
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [verifiedBanner, setVerifiedBanner] = useState(false);
@@ -290,6 +295,27 @@ export default function HomeScreen() {
     requestLocationPermissions();
   }, [requestLocationPermissions]);
 
+  // True when the last profile fetch failed. Without it a failed fetch left
+  // driverStatus "" — Switch disabled, no "Go Online" button, no message and
+  // nothing ever retried: a healthy-looking "You're Offline" card the rider
+  // could do nothing with.
+  const [profileError, setProfileError] = useState(false);
+  const fetchProfile = useCallback(async (t: string) => {
+    try {
+      const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string; is_approved?: boolean } }>(
+        "/delivery-partner/profile",
+        {},
+        t
+      );
+      setIsOnline(profileRes.profile.is_online);
+      setDriverStatus(profileRes.profile.status ?? "");
+      setIsApproved(profileRes.profile.is_approved !== false);
+      setProfileError(false);
+    } catch {
+      setProfileError(true);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       const session = await getSession();
@@ -301,38 +327,33 @@ export default function HomeScreen() {
       setToken(session.token);
       setUserName(session.user?.name || "");
 
+      await fetchProfile(session.token);
+      setLoading(false);
+
       // Shown once, ever — an in-app explanation before the OS's own "Allow
       // all the time" dialog, instead of jumping straight into that system
       // prompt with zero context. Riders only ever reach this screen once
       // verified (resolveAuthenticatedRoute gates it), so this is already
       // naturally "right after being verified" on their first Home visit.
+      // Runs AFTER first paint: previously the whole Home tab sat on a
+      // spinner until the rider answered the OS permission dialogs.
       const alreadyExplained = await AsyncStorage.getItem(LOCATION_PERMISSION_EXPLAINED_KEY);
       if (!alreadyExplained) {
         setShowLocationPermissionModal(true);
       } else {
-        await requestLocationPermissions();
+        // Only (re)prompt when permission isn't already granted — a rider who
+        // denied it was getting the "Permission needed" alert on every mount.
+        const { status } = await Location.getForegroundPermissionsAsync().catch(() => ({ status: "undetermined" as const }));
+        if (status !== "granted") void requestLocationPermissions();
       }
-
-      try {
-        const profileRes = await apiFetch<{ success: boolean; profile: { is_online: boolean; status: string; is_approved?: boolean } }>(
-          "/delivery-partner/profile",
-          {},
-          session.token
-        );
-        setIsOnline(profileRes.profile.is_online);
-        setDriverStatus(profileRes.profile.status ?? "");
-        setIsApproved(profileRes.profile.is_approved !== false);
-      } catch {}
-
-      setLoading(false);
     })();
 
     return () => {
-      locationSub.current?.remove();
+      removeLocationWatch(locationSub.current);
       // The offers poll interval is cleared by useRiderOrderPolling's own cleanup.
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [requestLocationPermissions, router]);
+  }, [requestLocationPermissions, router, fetchProfile]);
 
   // Mirrors driverStatus for the realtime handler below, which is set up
   // once per token (not re-subscribed on every status change) and so needs
@@ -440,7 +461,7 @@ export default function HomeScreen() {
 
     return () => {
       cancelled = true;
-      statusRealtimeChannelRef.current?.unsubscribe();
+      if (statusRealtimeChannelRef.current) void supabase.removeChannel(statusRealtimeChannelRef.current);
       statusRealtimeChannelRef.current = null;
     };
   }, [token, applyProfileUpdate]);
@@ -472,12 +493,18 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!isOnline || !token) {
-      locationSub.current?.remove();
+      removeLocationWatch(locationSub.current);
       locationSub.current = null;
       if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
       return;
     }
 
+    // If this effect is cleaned up while the awaits below are in flight
+    // (fast online→offline toggle, or the setIsOnline rollback in
+    // handleToggle), the subscription would otherwise arrive AFTER cleanup
+    // ran and be stored for an offline rider — GPS at High accuracy and
+    // location POSTs would keep running until the effect next re-ran.
+    let cancelled = false;
     (async () => {
       try {
         // A rider can flip "Go Online" without foreground location
@@ -488,14 +515,19 @@ export default function HomeScreen() {
         // app/delivery/[orderId].tsx was already fixed the same way after a
         // real crash report. Found 2026-08-26 during a crash-risk audit.
         const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") return;
-        locationSub.current = await Location.watchPositionAsync(
+        if (status !== "granted" || cancelled) return;
+        const sub = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.High, distanceInterval: 50, timeInterval: 10000 },
           (loc) => {
             setDriverPos({ lat: loc.coords.latitude, lng: loc.coords.longitude });
             sendLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.heading ?? null, loc.coords.speed ?? null, loc.coords.accuracy ?? null, loc.timestamp ?? null);
           }
         );
+        if (cancelled) {
+          removeLocationWatch(sub);
+          return;
+        }
+        locationSub.current = sub;
       } catch (err) {
         // Non-fatal — degrade gracefully (no live position sent) instead of
         // crashing the JS thread while the rider is online.
@@ -508,7 +540,8 @@ export default function HomeScreen() {
     heartbeatRef.current = setInterval(sendLastKnownLocation, 60000);
 
     return () => {
-      locationSub.current?.remove();
+      cancelled = true;
+      removeLocationWatch(locationSub.current);
       locationSub.current = null;
       if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     };
@@ -538,10 +571,15 @@ export default function HomeScreen() {
       updatePollingDegraded();
       if (res.success) {
         setIgnoredOfferIds((prev) => {
-          // Prune stale ignored IDs (offers that are no longer in the server list)
-          const serverIds = new Set((res.offers || []).map((o) => o.offer_id));
+          // Prune stale ignored IDs (offers that are no longer in the server
+          // list). Skip when the response is empty: a transient empty page
+          // (e.g. offers filtered while a status PATCH is in flight) wiped
+          // the whole set and resurrected dismissed offers on the next poll.
+          const serverOffers = res.offers || [];
+          if (serverOffers.length === 0 || prev.size === 0) return prev;
+          const serverIds = new Set(serverOffers.map((o) => o.offer_id));
           const pruned = new Set([...prev].filter((id) => serverIds.has(id)));
-          return pruned;
+          return pruned.size === prev.size ? prev : pruned;
         });
         setOffers(res.offers || []);
       }
@@ -623,7 +661,7 @@ export default function HomeScreen() {
   // in driver_order_offers for this driver — no waiting for the next poll cycle.
   useEffect(() => {
     if (!isOnline || !token || hasActiveOrder) {
-      realtimeChannelRef.current?.unsubscribe();
+      if (realtimeChannelRef.current) void supabase.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
       return;
     }
@@ -680,19 +718,36 @@ export default function HomeScreen() {
 
     return () => {
       cancelled = true;
-      realtimeChannelRef.current?.unsubscribe();
+      if (realtimeChannelRef.current) void supabase.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
     };
   }, [isOnline, token, fetchOffers, hasActiveOrder]);
 
+  // Developer tools (lib/devTools.ts): a demo order has no Realtime row to
+  // announce it, so refetch the moment one appears, is accepted or ends.
+  // The listener is never called in a production build.
+  useEffect(
+    () =>
+      onDemoOrdersChanged(() => {
+        fetchActiveOrder();
+        if (isOnline) fetchOffers();
+      }),
+    [isOnline, fetchOffers, fetchActiveOrder]
+  );
+
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchOffers(), fetchActiveOrder()]);
+    await Promise.all([fetchOffers(), fetchActiveOrder(), token ? fetchProfile(token) : Promise.resolve()]);
     setRefreshing(false);
   };
 
   const handleToggle = async (value: boolean) => {
-    if (toggling || !canGoOnline) return;
+    if (togglingRef.current) return;
+    // Only going ONLINE requires an active/approved profile. Going offline
+    // must always be allowed — otherwise a rider whose approval is revoked
+    // while online is stuck "Online" with GPS, heartbeat and the background
+    // task running and no UI to stop them.
+    if (value && !canGoOnline) return;
     // Going offline mid-delivery used to silently tear down GPS tracking (the
     // foreground watchPositionAsync effect and the background TaskManager task
     // are both keyed on isOnline alone) — freezing the customer's live tracking
@@ -709,6 +764,7 @@ export default function HomeScreen() {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    togglingRef.current = true;
     setIsOnline(value);
     setToggling(true);
     try {
@@ -730,6 +786,7 @@ export default function HomeScreen() {
       setIsOnline(!value);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
+      togglingRef.current = false;
       setToggling(false);
     }
   };
@@ -846,9 +903,9 @@ export default function HomeScreen() {
             <Switch
               value={isOnline}
               onValueChange={handleToggle}
-              disabled={toggling || !canGoOnline}
+              disabled={toggling || (!isOnline && !canGoOnline)}
               trackColor={{ false: Colors.border, true: Colors.accentLight }}
-              thumbColor={toggling || !canGoOnline ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
+              thumbColor={toggling || (!isOnline && !canGoOnline) ? Colors.textMuted : isOnline ? Colors.accent : Colors.textMuted}
             />
           </View>
         </View>
@@ -861,6 +918,18 @@ export default function HomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.accent} />
           }
         >
+          {profileError && !driverStatus && (
+            <TouchableOpacity
+              style={styles.profileErrorBanner}
+              onPress={() => token && fetchProfile(token)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="wifi-alert" size={18} color={Colors.accent} />
+              <Text style={styles.profileErrorText}>
+                Couldn&apos;t load your account status. Tap to retry.
+              </Text>
+            </TouchableOpacity>
+          )}
           {isOnline && !activeOrder && visibleOffers.length > 0 ? (
             <View style={styles.bannerCompact}>
               <Animated.View style={[styles.statusDot, { backgroundColor: Colors.online, transform: [{ scale: pulseAnim }] }]} />
@@ -943,7 +1012,7 @@ export default function HomeScreen() {
                       Your account is pending verification. Please connect to admin to get verified.
                     </Text>
                     <View style={{ gap: 6, marginTop: 8 }}>
-                      {ADMIN_CONTACTS.map((admin) => (
+                      {supportContacts.map((admin) => (
                         <TouchableOpacity
                           key={admin.phone}
                           style={[styles.adminContactBtn, { marginTop: 0 }]}
@@ -1431,6 +1500,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.danger + "40",
     padding: Spacing.md,
   },
+  profileErrorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.accentLight,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  profileErrorText: { flex: 1, color: Colors.text, fontSize: 13, fontWeight: "600" },
   statusWarningText: {
     color: Colors.danger,
     fontSize: 13,

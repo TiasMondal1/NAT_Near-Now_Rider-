@@ -15,6 +15,12 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
+import { appendPage } from "../../lib/orderPaging";
+import { formatOrderDate } from "../../lib/formatDate";
+
+// Backend caps a page at 200; 50 pages = 10k deliveries, a safe upper bound.
+const EARNINGS_PAGE_SIZE = 200;
+const MAX_EARNINGS_PAGES = 50;
 
 type Order = {
   id: string;
@@ -75,14 +81,32 @@ export default function EarningsScreen() {
   }, []);
 
   const fetchCompleted = useCallback(async () => {
-    if (!token) return;
+    if (!token) {
+      // Pull-to-refresh sets `refreshing` before calling this; bail out
+      // without clearing it and the spinner never stops.
+      setRefreshing(false);
+      return;
+    }
     try {
-      const res = await apiFetch<{ success: boolean; orders: Order[] }>(
-        "/delivery-partner/orders?status=completed",
-        {},
-        token
-      );
-      if (res.success) setOrders(res.orders);
+      // Lifetime totals need the COMPLETE history, but the backend caps a
+      // page (see lib/orderPaging.ts) and an unbounded request silently
+      // returned only the first page. Walk every page with limit/offset
+      // until has_more is false; appendPage dedupes the offset drift when a
+      // delivery completes between requests.
+      let all: Order[] = [];
+      let offset = 0;
+      for (let page = 0; page < MAX_EARNINGS_PAGES; page++) {
+        const res = await apiFetch<{ success: boolean; orders: Order[]; has_more?: boolean }>(
+          `/delivery-partner/orders?status=completed&limit=${EARNINGS_PAGE_SIZE}&offset=${offset}`,
+          {},
+          token
+        );
+        if (!res.success) break;
+        all = appendPage(all, res.orders);
+        offset += res.orders.length;
+        if (!res.has_more || res.orders.length === 0) break;
+      }
+      setOrders(all);
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -95,8 +119,13 @@ export default function EarningsScreen() {
     if (token) fetchCompleted();
   }, [token, fetchCompleted]);
 
+  // Re-keys the Today/This-week buckets below when the screen is revisited
+  // after midnight; previously `new Date()` was captured once per `orders`
+  // change, so "Today" stayed on yesterday's date until the next refetch.
+  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
   useFocusEffect(
     useCallback(() => {
+      setDayKey(new Date().toDateString());
       if (token) fetchCompleted();
     }, [token, fetchCompleted])
   );
@@ -120,7 +149,8 @@ export default function EarningsScreen() {
       weekEarnings: weekOrders.reduce((sum, o) => sum + orderEarning(o), 0),
       totalEarnings: orders.reduce((sum, o) => sum + orderEarning(o), 0),
     };
-  }, [orders]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, dayKey]);
 
   const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
   const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
@@ -134,15 +164,6 @@ export default function EarningsScreen() {
     return { payoutKnownOrders, legacyOrderCount: filteredOrders.length - payoutKnownOrders.length };
   }, [filteredOrders]);
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
 
   if (loading) {
     return (
@@ -173,7 +194,7 @@ export default function EarningsScreen() {
               onPress={() => setPeriod(p)}
             >
               <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
-                {p === "today" ? "Today" : p === "week" ? "This Week" : "All Time"}
+                {p === "today" ? "Today" : p === "week" ? "Last 7 Days" : "All Time"}
               </Text>
             </TouchableOpacity>
           ))}
@@ -208,7 +229,7 @@ export default function EarningsScreen() {
           </View>
           {legacyOrderCount > 0 && (
             <Text style={styles.legacyNote}>
-              {legacyOrderCount} {legacyOrderCount === 1 ? "delivery" : "deliveries"} shown as {"\u20B9"}0 \u2014 payout data unavailable for {legacyOrderCount === 1 ? "it" : "them"}, excluded from the average.
+              {legacyOrderCount} {legacyOrderCount === 1 ? "delivery" : "deliveries"} shown as {"\u20B9"}0 {"\u2014"} payout data unavailable for {legacyOrderCount === 1 ? "it" : "them"}, excluded from the average.
             </Text>
           )}
         </View>
@@ -266,14 +287,14 @@ export default function EarningsScreen() {
               </View>
               <View style={styles.cardDateRow}>
                 <MaterialCommunityIcons name="clock-outline" size={12} color={Colors.textMuted} />
-                {/* Was formatDate(item.placed_at) — showed the order's placement date
+                {/* Was formatOrderDate(item.placed_at) — showed the order's placement date
                     while Today/Week bucketing and totals above key off earningDate()
                     (payout_created_at, falling back to placed_at only for legacy
                     orders with no payout row). A delivery paid out today but placed
                     days earlier was correctly counted in "Today's Earnings" yet
                     showed the older placement date here — confusing, not a math bug.
                     Found 2026-09-09. */}
-                <Text style={styles.date}>{formatDate(earningDate(item).toISOString())}</Text>
+                <Text style={styles.date}>{formatOrderDate(earningDate(item).toISOString())}</Text>
               </View>
             </View>
           </Animated.View>
