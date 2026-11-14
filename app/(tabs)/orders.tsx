@@ -218,15 +218,20 @@ export default function OrdersScreen() {
     if (token) fetchOrders(true);
   }, [token, tab, fetchOrders]);
 
-  // Refetch on RE-focus only. The mount effect above already fetches, and
-  // useFocusEffect also fires on first focus (and whenever fetchOrders'
-  // identity changes with `tab`), which doubled every request.
+  // Refetch on RE-focus only; the effect above covers the first load, the
+  // token arriving and tab changes. The callback must be identity-stable:
+  // useFocusEffect re-runs whenever its callback changes, so keying it on
+  // [token, fetchOrders] fired again when the token arrived and on every tab
+  // switch, alongside the effect above, and skipping only the first call
+  // (made before the token existed) didn't stop that double fetch.
+  const fetchOrdersRef = useRef(fetchOrders);
+  fetchOrdersRef.current = fetchOrders;
   const hasFocusedRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
       if (!hasFocusedRef.current) { hasFocusedRef.current = true; return; }
-      if (token) fetchOrders(false, true);
-    }, [token, fetchOrders])
+      fetchOrdersRef.current(false, true);
+    }, [])
   );
 
   // Identity-stable so OrderCard's memo isn't defeated by a fresh closure

@@ -50,10 +50,30 @@ export function lastSessionReadFailed(): boolean {
 export async function getSession(): Promise<UserSession | null> {
   _lastReadFailed = false;
   if (_cache !== undefined) return _cache;
-  const raw = await AsyncStorage.getItem(SESSION_KEY);
-  if (!raw) { _cache = null; return null; }
+  let raw: string | null;
   try {
-    const rest = JSON.parse(raw) as Partial<UserSession>;
+    raw = await AsyncStorage.getItem(SESSION_KEY);
+  } catch {
+    // Couldn't read — unknown, not "logged out". Same soft failure as the
+    // SecureStore read below: nothing cached, nothing cleared.
+    _lastReadFailed = true;
+    return null;
+  }
+  if (!raw) { _cache = null; return null; }
+
+  let rest: Partial<UserSession>;
+  try {
+    rest = JSON.parse(raw) as Partial<UserSession>;
+  } catch {
+    // Corrupt AsyncStorage blob — clear it so every launch doesn't re-parse
+    // the same garbage and behave as logged-out while leaving it in place.
+    // This is the ONLY failure that wipes the session: everything below is
+    // a storage call that can fail transiently on a perfectly good session.
+    await clearSession();
+    return null;
+  }
+
+  try {
 
     // `useRiderVerificationGate` calls getSession() extremely often (on
     // mount, on every screen focus, every 30s, and on every app-foreground),
@@ -90,8 +110,17 @@ export async function getSession(): Promise<UserSession | null> {
     if (!token && !secureStoreFailed && rest.token) {
       token = rest.token;
       delete rest.token;
-      await SecureStore.setItemAsync(TOKEN_KEY, token);
-      await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(rest));
+      // The blob is only rewritten (dropping its copy of the token) once
+      // SecureStore holds it. If either write fails, keep the token for this
+      // call and leave the blob as it is, so the next launch retries the
+      // move; a throw here used to reach the catch below, which wiped the
+      // only copy of the token and forced a fresh OTP login.
+      try {
+        await SecureStore.setItemAsync(TOKEN_KEY, token);
+        await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(rest));
+      } catch {
+        // Retried on the next cold start.
+      }
     }
 
     if (secureStoreFailed) {
@@ -131,9 +160,9 @@ export async function getSession(): Promise<UserSession | null> {
     if (!supabaseReadFailed) _cache = session;
     return session;
   } catch {
-    // Corrupt AsyncStorage blob — clear it so every launch doesn't re-parse
-    // the same garbage and behave as logged-out while leaving it in place.
-    await clearSession();
+    // Any other storage failure: unknown, not "logged out". Fail this call
+    // soft without clearing anything (the corrupt-blob case is handled above).
+    _lastReadFailed = true;
     return null;
   }
 }
@@ -178,6 +207,8 @@ export async function clearSession() {
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {}),
     SecureStore.deleteItemAsync(SUPABASE_SESSION_KEY).catch(() => {}),
-    AsyncStorage.removeItem(SESSION_KEY),
+    // Caught like the two above: clearSession() runs inside getSession(),
+    // the 401 handler and logout, none of which should reject over it.
+    AsyncStorage.removeItem(SESSION_KEY).catch(() => {}),
   ]);
 }

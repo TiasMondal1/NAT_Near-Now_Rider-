@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../constants/api";
 import { ADMIN_CONTACTS } from "../constants/config";
+import { getSession } from "../session";
 
 export type SupportContact = { name: string; phone: string };
 
@@ -23,21 +24,39 @@ function isValid(c: unknown): c is SupportContact {
   return !!x && typeof x.name === "string" && typeof x.phone === "string" && /^\+?\d{8,15}$/.test(x.phone);
 }
 
-export async function fetchSupportContacts(token?: string): Promise<SupportContact[]> {
-  if (cached && Date.now() - cached.ts < TTL_MS) return cached.contacts;
+export function fetchSupportContacts(token?: string): Promise<SupportContact[]> {
+  if (cached && Date.now() - cached.ts < TTL_MS) return Promise.resolve(cached.contacts);
   if (inFlight) return inFlight;
 
-  inFlight = apiFetch<{ contacts?: unknown[] }>(ENDPOINT, {}, token, 0)
-    .then((res) => {
-      const list = Array.isArray(res?.contacts) ? res.contacts.filter(isValid) : [];
-      if (list.length === 0) return [...ADMIN_CONTACTS];
-      cached = { contacts: list, ts: Date.now() };
-      return list;
-    })
-    .catch(() => [...ADMIN_CONTACTS])
-    .finally(() => {
-      inFlight = null;
-    });
+  inFlight = (async () => {
+    try {
+      // The endpoint sits behind the backend's rider-auth middleware, so a
+      // request without a token can only come back 401. Callers that don't
+      // hold the token (pending-verification) get it from the session here;
+      // with no session at all, use the fallback without a request and
+      // without caching it, so the first signed-in call still asks.
+      const authToken = token || (await getSession())?.token;
+      if (!authToken) return [...ADMIN_CONTACTS];
+
+      let list: SupportContact[] = [];
+      try {
+        const res = await apiFetch<{ contacts?: unknown[] }>(ENDPOINT, {}, authToken, 0);
+        list = Array.isArray(res?.contacts) ? res.contacts.filter(isValid) : [];
+      } catch {
+        // 404 (backend without the endpoint), offline, 5xx: fallback below.
+      }
+      // The fallback is cached too. It used to be returned uncached, so on a
+      // backend without the endpoint every Home / pending-verification mount
+      // sent the same failing request again.
+      const contacts = list.length > 0 ? list : [...ADMIN_CONTACTS];
+      cached = { contacts, ts: Date.now() };
+      return contacts;
+    } catch {
+      return [...ADMIN_CONTACTS];
+    }
+  })().finally(() => {
+    inFlight = null;
+  });
 
   return inFlight;
 }

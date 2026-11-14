@@ -80,6 +80,11 @@ export default function EarningsScreen() {
     })();
   }, []);
 
+  // One history walk at a time. Each walk is up to MAX_EARNINGS_PAGES
+  // sequential requests; a focus (or pull-to-refresh) landing mid-walk joins
+  // it instead of starting a second one. The running walk clears
+  // `refreshing` when it ends.
+  const walkInFlightRef = useRef(false);
   const fetchCompleted = useCallback(async () => {
     if (!token) {
       // Pull-to-refresh sets `refreshing` before calling this; bail out
@@ -87,6 +92,8 @@ export default function EarningsScreen() {
       setRefreshing(false);
       return;
     }
+    if (walkInFlightRef.current) return;
+    walkInFlightRef.current = true;
     try {
       // Lifetime totals need the COMPLETE history, but the backend caps a
       // page (see lib/orderPaging.ts) and an unbounded request silently
@@ -110,14 +117,17 @@ export default function EarningsScreen() {
       setLoadError(false);
     } catch {
       setLoadError(true);
+    } finally {
+      walkInFlightRef.current = false;
     }
     setLoading(false);
     setRefreshing(false);
   }, [token]);
 
-  useEffect(() => {
-    if (token) fetchCompleted();
-  }, [token, fetchCompleted]);
+  // No separate mount effect: useFocusEffect below already runs on the first
+  // focus, again when `token` arrives (its callback changes), and on every
+  // re-focus. A `useEffect` on [token] as well fetched the whole history
+  // twice on first open.
 
   // Re-keys the Today/This-week buckets below when the screen is revisited
   // after midnight; previously `new Date()` was captured once per `orders`

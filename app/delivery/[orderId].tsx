@@ -290,6 +290,8 @@ export default function DeliveryScreen() {
   // dialogs, and confirming both sent "delivered" twice — the second one
   // failed and showed an error over a delivery that had actually succeeded.
   const deliveringRef = useRef(false);
+  // True while the "Confirm Delivery" dialog is on screen (see markDelivered).
+  const confirmOpenRef = useRef(false);
   const [token, setToken] = useState("");
   const [deliveryOtp, setDeliveryOtp] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
@@ -478,13 +480,20 @@ export default function DeliveryScreen() {
     !!order?.cod_collection && (order.amount_to_collect ?? 0) > 0 && !isCodSettled(order.cod_collection);
 
   const markDelivered = async () => {
-    if (deliveringRef.current) return;
+    // deliveringRef alone only closed the window once a dialog was CONFIRMED:
+    // two quick taps still opened two dialogs, and confirming the second one
+    // after the first request finished sent "delivered" again and showed an
+    // error over a successful delivery. Allow one open dialog at a time.
+    if (deliveringRef.current || confirmOpenRef.current) return;
+    confirmOpenRef.current = true;
+    const closeConfirm = () => { confirmOpenRef.current = false; };
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert("Confirm Delivery", "Mark this order as delivered to the customer?", [
-      { text: "Cancel", style: "cancel" },
+      { text: "Cancel", style: "cancel", onPress: closeConfirm },
       {
         text: "Yes, Delivered",
         onPress: async () => {
+          closeConfirm();
           if (deliveringRef.current) return;
           deliveringRef.current = true;
           setDelivering(true);
@@ -500,7 +509,7 @@ export default function DeliveryScreen() {
           }
         },
       },
-    ]);
+    ], { onDismiss: closeConfirm });
   };
 
   const verifyDeliveryOtp = async () => {
