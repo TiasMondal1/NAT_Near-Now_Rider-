@@ -15,44 +15,76 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors, Spacing, BorderRadius, MAX_CONTENT_WIDTH } from "../../constants/theme";
 import { apiFetch } from "../../constants/api";
 import { getSession } from "../../session";
-import { appendPage } from "../../lib/orderPaging";
+import { ORDERS_PAGE_SIZE, appendPage, mergeFirstPage } from "../../lib/orderPaging";
 import { formatOrderDate } from "../../lib/formatDate";
+import {
+  earningDate,
+  earningsWindow,
+  summariseLocally,
+  summaryPath,
+  todayRows,
+  type EarningsRow,
+  type EarningsSummary,
+  type EarningsSummaryResponse,
+} from "../../lib/earnings";
 
-// Backend caps a page at 200; 50 pages = 10k deliveries, a safe upper bound.
-const EARNINGS_PAGE_SIZE = 200;
-const MAX_EARNINGS_PAGES = 50;
+// Fallback only (backend without /earnings/summary): the old full-history
+// walk. The backend caps a page at 200; 50 pages = 10k deliveries.
+const LEGACY_PAGE_SIZE = 200;
+const LEGACY_MAX_PAGES = 50;
 
-type Order = {
-  id: string;
-  order_code: string;
-  status: string;
-  total_amount: number;
-  delivery_address: string;
-  placed_at: string;
-  stores?: { name: string } | null;
-  /** Real payout amount for this order (flat fee + tip), from delivery_partners_payouts.
-   * null for orders delivered before this was wired up — no payout row exists for those. */
-  payout_amount: number | null;
-  /** When the payout row was written (i.e. delivery/settlement time), or null for legacy orders. */
-  payout_created_at: string | null;
-};
+type OrdersPage = { success: boolean; orders: EarningsRow[]; has_more?: boolean };
 
-/** Real earnings for this order, or 0 if no payout row exists yet (pre-fix orders). */
-const orderEarning = (o: Order) => o.payout_amount ?? 0;
-
-/** Bucket by when the rider was actually paid, not when the customer placed the order —
- * falls back to placed_at for legacy orders with no payout row. */
-const earningDate = (o: Order) => new Date(o.payout_created_at ?? o.placed_at);
+/** Every completed order, page by page — what this tab did before the summary endpoint. */
+async function walkCompletedHistory(token: string): Promise<EarningsRow[]> {
+  let all: EarningsRow[] = [];
+  let offset = 0;
+  for (let page = 0; page < LEGACY_MAX_PAGES; page++) {
+    const res = await apiFetch<OrdersPage>(
+      `/delivery-partner/orders?status=completed&limit=${LEGACY_PAGE_SIZE}&offset=${offset}`,
+      {},
+      token
+    );
+    if (!res.success) break;
+    all = appendPage(all, res.orders);
+    offset += res.orders.length;
+    if (!res.has_more || res.orders.length === 0) break;
+  }
+  return all;
+}
 
 type Period = "today" | "week" | "all";
 
 export default function EarningsScreen() {
-  const [orders, setOrders] = useState<Order[]>([]);
+  // Totals for all three periods, plus the deliveries of the last 7 days
+  // (the Today and Last 7 Days lists), from one /earnings/summary call.
+  const [summary, setSummary] = useState<EarningsSummary | null>(null);
+  const [recent, setRecent] = useState<EarningsRow[]>([]);
+  const [todayStart, setTodayStart] = useState(() => earningsWindow(Date.now()).todayStart);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [token, setToken] = useState("");
   const [period, setPeriod] = useState<Period>("today");
+  const periodRef = useRef(period);
+  periodRef.current = period;
+
+  // The All Time list, paged on demand (first page when the rider opens that
+  // period, more on scroll) instead of downloading every delivery up front.
+  const [allOrders, setAllOrders] = useState<EarningsRow[]>([]);
+  const allOrdersRef = useRef(allOrders);
+  allOrdersRef.current = allOrders;
+  const [allHasMore, setAllHasMore] = useState(false);
+  const [allLoaded, setAllLoaded] = useState(false);
+  const allLoadedRef = useRef(false);
+  const [allLoading, setAllLoading] = useState(false);
+  const [allError, setAllError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  const allSeqRef = useRef(0);
+  // Set once the backend answers 404 for /earnings/summary (it predates the
+  // endpoint): this run then uses the old full-history walk for everything.
+  const legacyBackendRef = useRef(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
@@ -72,7 +104,7 @@ export default function EarningsScreen() {
       } else {
         // getSession() can transiently return null on a SecureStore read
         // glitch even with a valid session cached elsewhere — without this,
-        // `token` never gets set, fetchCompleted() (the only place that
+        // `token` never gets set, fetchSummary() (the only place that
         // flips `loading` to false) never runs, and this screen spins
         // forever. Found 2026-08-26 during a crash-risk audit.
         setLoading(false);
@@ -80,99 +112,153 @@ export default function EarningsScreen() {
     })();
   }, []);
 
-  // One history walk at a time. Each walk is up to MAX_EARNINGS_PAGES
-  // sequential requests; a focus (or pull-to-refresh) landing mid-walk joins
-  // it instead of starting a second one. The running walk clears
-  // `refreshing` when it ends.
-  const walkInFlightRef = useRef(false);
-  const fetchCompleted = useCallback(async () => {
+  // Totals + the 7-day rows: one /earnings/summary call. One at a time; a
+  // focus or pull-to-refresh landing while it runs is absorbed by it (it
+  // clears `refreshing` when it ends).
+  const summaryInFlightRef = useRef(false);
+  const fetchSummary = useCallback(async () => {
     if (!token) {
       // Pull-to-refresh sets `refreshing` before calling this; bail out
       // without clearing it and the spinner never stops.
       setRefreshing(false);
       return;
     }
-    if (walkInFlightRef.current) return;
-    walkInFlightRef.current = true;
+    if (summaryInFlightRef.current) return;
+    summaryInFlightRef.current = true;
+    // A fresh window on every fetch, so "Today" moves on at midnight.
+    const win = earningsWindow(Date.now());
     try {
-      // Lifetime totals need the COMPLETE history, but the backend caps a
-      // page (see lib/orderPaging.ts) and an unbounded request silently
-      // returned only the first page. Walk every page with limit/offset
-      // until has_more is false; appendPage dedupes the offset drift when a
-      // delivery completes between requests.
-      let all: Order[] = [];
-      let offset = 0;
-      for (let page = 0; page < MAX_EARNINGS_PAGES; page++) {
-        const res = await apiFetch<{ success: boolean; orders: Order[]; has_more?: boolean }>(
-          `/delivery-partner/orders?status=completed&limit=${EARNINGS_PAGE_SIZE}&offset=${offset}`,
-          {},
-          token
-        );
-        if (!res.success) break;
-        all = appendPage(all, res.orders);
-        offset += res.orders.length;
-        if (!res.has_more || res.orders.length === 0) break;
+      if (!legacyBackendRef.current) {
+        try {
+          const res = await apiFetch<EarningsSummaryResponse>(summaryPath(win), {}, token);
+          // Filter the Today list with the boundary the server actually used.
+          const serverToday = res.window ? Date.parse(res.window.today_start) : NaN;
+          setSummary(res.summary);
+          setRecent(res.recent ?? []);
+          setTodayStart(Number.isFinite(serverToday) ? serverToday : win.todayStart);
+          setLoadError(false);
+          return;
+        } catch (err: any) {
+          if (err?.status !== 404) throw err;
+          legacyBackendRef.current = true;
+        }
       }
-      setOrders(all);
+      // Backend without the endpoint: download everything and add it up here,
+      // as this tab used to. The All Time list then has every delivery too.
+      const all = await walkCompletedHistory(token);
+      const local = summariseLocally(all, win);
+      setSummary(local.summary);
+      setRecent(local.recent);
+      setTodayStart(win.todayStart);
+      setAllOrders(all);
+      setAllHasMore(false);
+      allLoadedRef.current = true;
+      setAllLoaded(true);
+      setAllError(false);
       setLoadError(false);
     } catch {
       setLoadError(true);
     } finally {
-      walkInFlightRef.current = false;
+      summaryInFlightRef.current = false;
+      setLoading(false);
+      setRefreshing(false);
     }
-    setLoading(false);
-    setRefreshing(false);
   }, [token]);
 
-  // No separate mount effect: useFocusEffect below already runs on the first
-  // focus, again when `token` arrives (its callback changes), and on every
-  // re-focus. A `useEffect` on [token] as well fetched the whole history
-  // twice on first open.
-
-  // Re-keys the Today/This-week buckets below when the screen is revisited
-  // after midnight; previously `new Date()` was captured once per `orders`
-  // change, so "Today" stayed on yesterday's date until the next refetch.
-  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
-  useFocusEffect(
-    useCallback(() => {
-      setDayKey(new Date().toDateString());
-      if (token) fetchCompleted();
-    }, [token, fetchCompleted])
+  /** Newest page of the All Time list. `keepOlderPages` (focus refresh) keeps pages already scrolled to. */
+  const loadAllFirstPage = useCallback(
+    async (keepOlderPages: boolean) => {
+      if (!token || legacyBackendRef.current) return;
+      const seq = ++allSeqRef.current;
+      setAllLoading(true);
+      try {
+        const res = await apiFetch<OrdersPage>(
+          `/delivery-partner/orders?status=completed&limit=${ORDERS_PAGE_SIZE}`,
+          {},
+          token
+        );
+        if (seq !== allSeqRef.current) return;
+        if (res.success) {
+          if (keepOlderPages && allOrdersRef.current.length > ORDERS_PAGE_SIZE) {
+            setAllOrders((prev) => mergeFirstPage(prev, res.orders));
+          } else {
+            setAllOrders(res.orders);
+            setAllHasMore(!!res.has_more);
+          }
+          allLoadedRef.current = true;
+          setAllLoaded(true);
+          setAllError(false);
+        }
+      } catch {
+        if (seq === allSeqRef.current) setAllError(true);
+      } finally {
+        if (seq === allSeqRef.current) setAllLoading(false);
+      }
+    },
+    [token]
   );
 
-  // `orders` is deliberately unbounded (lifetime earnings need full
-  // completeness, unlike orders.tsx's capped ?limit=50) and can grow large
-  // for a long-tenured rider — these 5 buckets/sums previously re-scanned
-  // the whole array on every render, including re-renders caused by
-  // unrelated state (e.g. `refreshing` toggling). Memoized on `orders` so
-  // they only recompute when the underlying data actually changes.
-  const { todayOrders, weekOrders, todayEarnings, weekEarnings, totalEarnings } = useMemo(() => {
-    const now = new Date();
-    const todayStr = now.toDateString();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const todayOrders = orders.filter((o) => earningDate(o).toDateString() === todayStr);
-    const weekOrders = orders.filter((o) => earningDate(o) >= weekAgo);
-    return {
-      todayOrders,
-      weekOrders,
-      todayEarnings: todayOrders.reduce((sum, o) => sum + orderEarning(o), 0),
-      weekEarnings: weekOrders.reduce((sum, o) => sum + orderEarning(o), 0),
-      totalEarnings: orders.reduce((sum, o) => sum + orderEarning(o), 0),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, dayKey]);
+  /** Next older page of the All Time list (FlatList onEndReached). */
+  const loadMoreAll = useCallback(async () => {
+    if (!token || !allHasMore || loadingMoreRef.current || legacyBackendRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const seq = allSeqRef.current;
+    try {
+      const res = await apiFetch<OrdersPage>(
+        `/delivery-partner/orders?status=completed&limit=${ORDERS_PAGE_SIZE}&offset=${allOrdersRef.current.length}`,
+        {},
+        token
+      );
+      if (seq !== allSeqRef.current) return; // the list was reloaded meanwhile
+      if (res.success) {
+        setAllOrders((prev) => appendPage(prev, res.orders));
+        setAllHasMore(!!res.has_more);
+      }
+    } catch {
+      // The next scroll to the end tries again.
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [token, allHasMore]);
 
-  const filteredOrders = period === "today" ? todayOrders : period === "week" ? weekOrders : orders;
-  const filteredEarnings = period === "today" ? todayEarnings : period === "week" ? weekEarnings : totalEarnings;
+  // First focus, the token arriving (the callback changes) and every
+  // re-focus: one summary call, plus the All Time list's newest page if the
+  // rider has already opened it. No separate mount effect — that doubled the
+  // first load.
+  useFocusEffect(
+    useCallback(() => {
+      if (!token) return;
+      void fetchSummary();
+      if (allLoadedRef.current) void loadAllFirstPage(true);
+    }, [token, fetchSummary, loadAllFirstPage])
+  );
 
-  // Orders with no payout row (pre-payout-fix deliveries) contribute ₹0 to
-  // filteredEarnings but shouldn't count toward the average's divisor — doing
-  // so silently drags "Avg ₹/delivery" down and could look like underpayment
-  // for deliveries that simply predate payout tracking.
-  const { payoutKnownOrders, legacyOrderCount } = useMemo(() => {
-    const payoutKnownOrders = filteredOrders.filter((o) => o.payout_amount != null);
-    return { payoutKnownOrders, legacyOrderCount: filteredOrders.length - payoutKnownOrders.length };
-  }, [filteredOrders]);
+  // The All Time list loads the first time that period is opened.
+  useEffect(() => {
+    if (period === "all" && token && !allLoadedRef.current) void loadAllFirstPage(false);
+  }, [period, token, loadAllFirstPage]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    void fetchSummary();
+    if (periodRef.current === "all") void loadAllFirstPage(false);
+  }, [fetchSummary, loadAllFirstPage]);
+
+  const todayList = useMemo(() => todayRows(recent, todayStart), [recent, todayStart]);
+  const filteredOrders = period === "today" ? todayList : period === "week" ? recent : allOrders;
+
+  const bucket = summary?.[period];
+  const filteredEarnings = bucket?.earnings ?? 0;
+  const deliveryCount = bucket?.deliveries ?? 0;
+  // Deliveries with no payout row (from before payouts were recorded) add ₹0
+  // to the total but are left out of the average's divisor — counting them
+  // would drag "Avg ₹/delivery" down and look like underpayment.
+  const payoutKnownCount = bucket?.payout_known ?? 0;
+  const legacyOrderCount = deliveryCount - payoutKnownCount;
+  const showListError = period === "all" ? allError && allOrders.length === 0 : loadError && !summary;
+  const listPending = period === "all" && !allLoaded && !allError;
 
 
   if (loading) {
@@ -189,7 +275,7 @@ export default function EarningsScreen() {
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <Text style={styles.header}>Earnings</Text>
 
-        {loadError && orders.length > 0 && (
+        {loadError && summary && (
           <View style={styles.staleBanner}>
             <MaterialCommunityIcons name="wifi-alert" size={14} color={Colors.warning} />
             <Text style={styles.staleBannerText}>Connection issue — figures may be outdated</Text>
@@ -226,13 +312,13 @@ export default function EarningsScreen() {
           <View style={styles.summaryBottom}>
             <View style={styles.summaryMeta}>
               <MaterialCommunityIcons name="package-variant-closed" size={16} color={Colors.textMuted} />
-              <Text style={styles.summaryMetaText}>{filteredOrders.length} deliveries</Text>
+              <Text style={styles.summaryMetaText}>{deliveryCount} deliveries</Text>
             </View>
-            {payoutKnownOrders.length > 0 && (
+            {payoutKnownCount > 0 && (
               <View style={styles.summaryMeta}>
                 <MaterialCommunityIcons name="trending-up" size={16} color={Colors.success} />
                 <Text style={[styles.summaryMetaText, { color: Colors.success }]}>
-                  Avg {"\u20B9"}{(filteredEarnings / payoutKnownOrders.length).toFixed(0)}/delivery
+                  Avg {"\u20B9"}{(filteredEarnings / payoutKnownCount).toFixed(0)}/delivery
                 </Text>
               </View>
             )}
@@ -246,15 +332,15 @@ export default function EarningsScreen() {
 
         <View style={styles.quickStatsRow}>
           <View style={[styles.quickStat, { backgroundColor: Colors.accentLight }]}>
-            <Text style={[styles.quickStatValue, { color: Colors.accent }]}>{todayOrders.length}</Text>
+            <Text style={[styles.quickStatValue, { color: Colors.accent }]}>{summary?.today.deliveries ?? 0}</Text>
             <Text style={styles.quickStatLabel}>Today</Text>
           </View>
           <View style={[styles.quickStat, { backgroundColor: Colors.warningLight }]}>
-            <Text style={[styles.quickStatValue, { color: Colors.warning }]}>{weekOrders.length}</Text>
+            <Text style={[styles.quickStatValue, { color: Colors.warning }]}>{summary?.week.deliveries ?? 0}</Text>
             <Text style={styles.quickStatLabel}>This Week</Text>
           </View>
           <View style={[styles.quickStat, { backgroundColor: Colors.successLight }]}>
-            <Text style={[styles.quickStatValue, { color: Colors.success }]}>{orders.length}</Text>
+            <Text style={[styles.quickStatValue, { color: Colors.success }]}>{summary?.all.deliveries ?? 0}</Text>
             <Text style={styles.quickStatLabel}>Total</Text>
           </View>
         </View>
@@ -267,14 +353,15 @@ export default function EarningsScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              fetchCompleted();
-            }}
-            tintColor={Colors.accent}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent} />
+        }
+        // All Time pages in as the rider scrolls; Today / Last 7 Days are complete already.
+        onEndReached={period === "all" ? () => void loadMoreAll() : undefined}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          period === "all" && loadingMore ? (
+            <ActivityIndicator color={Colors.accent} style={{ marginVertical: Spacing.lg }} />
+          ) : null
         }
         renderItem={({ item }) => (
           <Animated.View style={{ opacity: fadeAnim }}>
@@ -310,14 +397,22 @@ export default function EarningsScreen() {
           </Animated.View>
         )}
         ListEmptyComponent={
-          loadError ? (
+          listPending || (period === "all" && allLoading && allOrders.length === 0) ? (
+            <ActivityIndicator color={Colors.accent} style={{ marginTop: Spacing.xl }} />
+          ) : showListError ? (
             <View style={styles.emptyContainer}>
               <View style={[styles.emptyIconWrap, { backgroundColor: Colors.warningLight }]}>
                 <MaterialCommunityIcons name="wifi-alert" size={40} color={Colors.warning} />
               </View>
               <Text style={styles.emptyText}>Couldn&apos;t load earnings</Text>
               <Text style={styles.emptySub}>Check your connection and try again.</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={() => fetchCompleted()}>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => {
+                  void fetchSummary();
+                  if (period === "all") void loadAllFirstPage(false);
+                }}
+              >
                 <Text style={styles.retryBtnText}>Try Again</Text>
               </TouchableOpacity>
             </View>
