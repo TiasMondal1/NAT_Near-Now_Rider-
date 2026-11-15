@@ -95,7 +95,7 @@ module.exports = () => {
         // "remote" + autoIncrement in eas.json) — EAS ignores this value. It
         // only applies to LOCAL `npm run build:apk` / `build:aab` artifacts;
         // override with ANDROID_VERSION_CODE when cutting one of those.
-        versionCode: Number(process.env.ANDROID_VERSION_CODE) || 8,
+        versionCode: Number(process.env.ANDROID_VERSION_CODE) || 9,
         config: {
           googleMaps: {
             apiKey: googleMapsApiKey,
