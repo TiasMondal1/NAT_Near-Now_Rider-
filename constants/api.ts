@@ -1,5 +1,6 @@
 import { API_CONFIG } from "./config";
 import { clearSession } from "../session";
+import { reportRequestFailure } from "../lib/reportHandled";
 
 const API_BASE = API_CONFIG.BASE_URL;
 
@@ -157,6 +158,22 @@ export async function apiFetch<T = unknown>(
         if (res.status === 429) {
           const retryAfter = res.headers.get("Retry-After");
           if (retryAfter) err.retryAfterSeconds = Number(retryAfter);
+        }
+        // Failures the screens handle quietly → Sentry (once per endpoint +
+        // status per 10 min, so a retried 5xx or a poller reports once). A
+        // 401 here means a wrong OTP (no token sent); not a bug.
+        if (res.status !== 401) {
+          const payload = errorPayload as { code?: unknown; error_code?: unknown; requestId?: unknown };
+          const code = payload.error_code ?? payload.code;
+          reportRequestFailure({
+            source: "api",
+            method,
+            url: normalizedPath,
+            status: res.status,
+            code: typeof code === "string" ? code : undefined,
+            message: err.message,
+            requestId: typeof payload.requestId === "string" ? payload.requestId : undefined,
+          });
         }
         // Don't retry 4xx errors (client mistakes)
         if (res.status >= 400 && res.status < 500) throw err;

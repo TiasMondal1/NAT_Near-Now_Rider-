@@ -109,6 +109,17 @@ module.exports = () => {
       plugins: [
         "expo-router",
         "expo-secure-store",
+        // Writes android/sentry.properties so release builds upload source
+        // maps to this project (needs SENTRY_AUTH_TOKEN: .env.local locally,
+        // an EAS secret on the builder). The DSN itself is extra.sentryDsn.
+        [
+          "@sentry/react-native",
+          {
+            url: "https://sentry.io/",
+            organization: "near-now",
+            project: "rider",
+          },
+        ],
         withAbiSplits,
         withReleaseBuild,
         withTabletSupport,

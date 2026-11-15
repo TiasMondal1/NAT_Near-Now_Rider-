@@ -1,6 +1,14 @@
 import { AppState } from "react-native";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_CONFIG } from "../constants/config";
+import { reportSupabaseResponse } from "./reportHandled";
+
+/** fetch for the Supabase client: failed uploads/queries the screens handle quietly → Sentry. A success costs one check. */
+const reportingFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.status >= 400) reportSupabaseResponse(input, init, response);
+  return response;
+};
 
 /**
  * False when the build was made without EXPO_PUBLIC_SUPABASE_URL /
@@ -39,6 +47,7 @@ export const supabase = createClient(
       autoRefreshToken: isSupabaseConfigured,
       detectSessionInUrl: false,
     },
+    global: { fetch: reportingFetch },
   }
 );
 

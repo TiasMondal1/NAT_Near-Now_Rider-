@@ -46,11 +46,35 @@ if (fs.existsSync(envPath)) {
   console.log("  EXPO_PUBLIC_SUPABASE_URL      =", supaUrl || "(not set)");
   console.log("  EXPO_PUBLIC_SUPABASE_ANON_KEY =", supaKey ? `${supaKey.slice(0, 20)}...` : "(not set)");
   console.log("  EXPO_PUBLIC_GOOGLE_MAPS_API_KEY =", mapsKey ? `${mapsKey.slice(0, 8)}...` : "(not set)");
+  console.log("  EXPO_PUBLIC_SENTRY_DSN        =", process.env.EXPO_PUBLIC_SENTRY_DSN ? "set (crash reporting on)" : "(not set — no crash reporting)");
 } else {
   console.warn("No .env file found. Build will continue without injected EXPO_PUBLIC_* values.");
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
+
+// The Sentry upload token lives in .env.local (gitignored), not .env: it is a
+// secret, unlike the EXPO_PUBLIC_* values above. Only that one key is read.
+const envLocalPath = path.join(rootDir, ".env.local");
+if (!process.env.SENTRY_AUTH_TOKEN && fs.existsSync(envLocalPath)) {
+  const match = fs
+    .readFileSync(envLocalPath, "utf8")
+    .match(/^\s*SENTRY_AUTH_TOKEN\s*=\s*["']?([^"'\s]+)["']?\s*$/m);
+  if (match) process.env.SENTRY_AUTH_TOKEN = match[1];
+}
+
+// Source maps upload after JS bundling (node_modules/@sentry/react-native/
+// sentry.gradle); org and project come from the plugin options in
+// app.config.js. Without a token sentry-cli fails and aborts the whole release
+// build, so skip the upload instead. Set SENTRY_DISABLE_AUTO_UPLOAD to override.
+if (process.env.SENTRY_DISABLE_AUTO_UPLOAD == null) {
+  if (process.env.SENTRY_AUTH_TOKEN) {
+    console.log("Sentry: SENTRY_AUTH_TOKEN found — source maps will be uploaded.");
+  } else {
+    process.env.SENTRY_DISABLE_AUTO_UPLOAD = "true";
+    console.log("Sentry: SENTRY_AUTH_TOKEN not set (.env.local) — skipping source map upload for this build.");
+  }
+}
 
 // A release is production unless --env=preview: the .env value is for
 // `expo start`, and anything else baked into a release would ship the
