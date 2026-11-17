@@ -11,6 +11,7 @@ import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useProfileChangeOutcomeGate } from "../lib/useProfileChangeOutcomeGate";
 import ProfileChangeOutcomeModal from "../components/ProfileChangeOutcomeModal";
+import { UpdateRequiredGate } from "../components/UpdateRequiredGate";
 // Side-effect import: registers the background location TaskManager task at
 // module load, before any component mounts. Required so a location update
 // that relaunches the app after it was killed still has a task definition
@@ -232,6 +233,8 @@ export default function RootLayout() {
           }}
         />
         <ProfileChangeOutcomeModal outcome={outcome} onDismiss={dismiss} />
+        {/* Above everything: an install below the server's minimum build is asked to update (2026-11-17). */}
+        <UpdateRequiredGate />
       </View>
     </ErrorBoundary>
   );
