@@ -9,7 +9,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node scripts/check-order-polling.mjs && node scripts/check-dev-tools.mjs && node scripts/check-earnings.mjs && node scripts/check-update-gate.mjs",
+    "test": "node scripts/check-order-polling.mjs && node scripts/check-dev-tools.mjs && node scripts/check-earnings.mjs && node scripts/check-update-gate.mjs && node scripts/check-audio-services.mjs",
     "check": "npm run typecheck && npm run lint && npm test",
     "prebuild:android": "node scripts/prebuild-android.js",
     "prebuild:ios": "npx expo prebuild --platform ios",

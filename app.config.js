@@ -4,6 +4,7 @@ const withAbiSplits = require("./plugins/withAbiSplits");
 const withReleaseBuild = require("./plugins/withReleaseBuild");
 const withTabletSupport = require("./plugins/withTabletSupport");
 const withKeepNotificationSound = require("./plugins/withKeepNotificationSound");
+const withoutAudioForegroundServices = require("./plugins/withoutAudioForegroundServices");
 
 // This app's android/ directory is gitignored (managed workflow — EAS Build
 // runs `expo prebuild` fresh from this config every time), so referencing a
@@ -133,6 +134,9 @@ module.exports = () => {
         withTabletSupport,
         // Stops release resource shrinking from emptying the order sound.
         [withKeepNotificationSound, { sounds: ["order_chime"] }],
+        // Removes expo-audio's media/microphone foreground services from the
+        // manifest (blockedPermissions above only drops the permissions).
+        withoutAudioForegroundServices,
         [
           "expo-location",
           {
