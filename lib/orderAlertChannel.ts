@@ -7,11 +7,18 @@ import { Colors } from "../constants/theme";
  *
  * The id ends in _v2 because Android fixes a channel's sound when it is
  * created: the original "orders" channel could never pick up
- * order_chime.wav, only a channel with a new id does. The id must match
+ * the order sound, only a channel with a new id does. The id must match
  * `defaultChannel` in app.config.js.
+ *
+ * The channel stores the sound by resource name ("order_chime"), not by
+ * file. Replacing the sound therefore means replacing
+ * assets/sounds/order_chime.* and keeping that name: every phone that
+ * already has this channel then plays the new sound after the update, with
+ * no new channel and no server change. A differently named file would need
+ * a new channel id, and the server would have to send that id.
  */
 export const ORDERS_CHANNEL_ID = "orders_v2";
-export const ORDER_CHIME_SOUND = "order_chime.wav";
+export const ORDER_CHIME_SOUND = "order_chime.mp3";
 
 type NotificationsModule = typeof import("expo-notifications");
 

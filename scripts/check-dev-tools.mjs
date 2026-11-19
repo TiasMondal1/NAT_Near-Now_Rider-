@@ -12,11 +12,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import {
   DEV_TOOLS_TAPS_TO_UNLOCK,
   DEV_TOOLS_TAP_WINDOW_MS,
   devToolsAvailable,
   registerUnlockTap,
+  isDevToolsPassword,
+  sha256Hex,
 } from "../lib/devToolsRules.ts";
 import {
   DEMO_DELIVERY_OTP,
@@ -67,6 +70,20 @@ test("a pause between taps starts the count again", () => {
   taps = registerUnlockTap(taps, (now += DEV_TOOLS_TAP_WINDOW_MS + 1));
   assert.equal(taps.unlocked, false, "six taps, a pause, one tap must not unlock");
   assert.equal(taps.count, 1);
+});
+
+test("the password check hashes correctly and refuses wrong or empty input", () => {
+  // Standard SHA-256 test vectors, so the hand-written hash is known good.
+  assert.equal(sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  assert.equal(sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  // Longer than one 64-byte block, checked against Node's own implementation.
+  const long = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".repeat(3);
+  assert.equal(sha256Hex(long), createHash("sha256").update(long).digest("hex"));
+  assert.equal(sha256Hex("₹ é"), createHash("sha256").update("₹ é").digest("hex"));
+  // The real password is deliberately not written here (public repository).
+  assert.equal(isDevToolsPassword(""), false);
+  assert.equal(isDevToolsPassword("password"), false);
+  assert.equal(isDevToolsPassword("1234"), false);
 });
 
 test("a release build is production unless --env=preview is passed", () => {

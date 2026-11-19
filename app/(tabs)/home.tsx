@@ -11,6 +11,7 @@ import {
   ScrollView,
   RefreshControl,
   AppState,
+  Linking,
   type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -33,6 +34,15 @@ import { useRiderOrderPolling } from "../../lib/useRiderOrderPolling";
 import LocationPermissionModal from "../../components/LocationPermissionModal";
 import { callNumber } from "../../lib/openLink";
 import { onDemoOrdersChanged } from "../../lib/devTools";
+import {
+  startOrderRing,
+  stopOrderRing,
+  onOfferPush,
+  getOrderAlertPermission,
+  requestOrderAlertPermission,
+  type OrderAlertPermission,
+} from "../../lib/orderRing";
+import { registerForOrderPushes } from "../../lib/pushRegistration";
 
 // "Ignore" is a soft, personal, this-device-only dismissal — not a real
 // business-level rejection (other riders still see the offer, and it still
@@ -40,7 +50,12 @@ import { onDemoOrdersChanged } from "../../lib/devTools";
 // AsyncStorage, not a driver_order_offers status column, which would risk
 // colliding with the real accept/expire/reassign state machine there.
 const IGNORED_OFFERS_KEY = "rider_ignored_offer_ids";
-const LOCATION_PERMISSION_EXPLAINED_KEY = "rider_location_permission_explained";
+// The rider's answer to the background-location disclosure
+// (components/LocationPermissionModal.tsx): "accepted" or "declined". _v2
+// because the disclosure was rewritten for Google Play's policy — riders who
+// only saw the old text and never allowed background location see the new
+// one once.
+const LOCATION_DISCLOSURE_KEY = "rider_location_disclosure_v2";
 
 type OfferStoreItem = {
   product_name: string;
@@ -132,6 +147,10 @@ export default function HomeScreen() {
   const acceptingRef = useRef(false);
   const [ignoredOfferIds, setIgnoredOfferIds] = useState<Set<string>>(new Set());
   const [showLocationPermissionModal, setShowLocationPermissionModal] = useState(false);
+  // null = not known (not checked yet, or the platform can't say).
+  const [backgroundLocationGranted, setBackgroundLocationGranted] = useState<boolean | null>(null);
+  const [alertPermission, setAlertPermission] = useState<OrderAlertPermission | null>(null);
+  const alertsWereOffRef = useRef(false);
   // Guards the persist effect below from firing (and overwriting real
   // storage with an empty set) before the initial AsyncStorage read below
   // has actually completed.
@@ -264,6 +283,32 @@ export default function HomeScreen() {
   // time". State (not a ref) isn't used here since nothing needs to re-render off it.
   const requestingLocationPermissionRef = useRef(false);
 
+  // What the two banners on Home are based on. Re-read whenever the app
+  // comes back to the front, because both are changed in the system Settings.
+  const refreshPermissionState = useCallback(async () => {
+    const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+    setBackgroundLocationGranted(bg ? bg.status === "granted" : null);
+    const alerts = await getOrderAlertPermission();
+    setAlertPermission(alerts);
+    if (alerts?.granted && alertsWereOffRef.current) {
+      // Turned on in Settings since we last looked: the push token was never
+      // sent for this login, so send it now.
+      registerForOrderPushes({ prompt: false }).catch(() => {});
+    }
+    alertsWereOffRef.current = alerts ? !alerts.granted : false;
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refreshPermissionState();
+    });
+    return () => sub.remove();
+  }, [refreshPermissionState]);
+
+  // Called ONLY from the disclosure's "Allow location access" button. Google
+  // Play requires the in-app disclosure to come directly before the system's
+  // background-location request, every time — so nothing else in the app may
+  // call requestBackgroundPermissionsAsync.
   const requestLocationPermissions = useCallback(async () => {
     if (requestingLocationPermissionRef.current) return;
     requestingLocationPermissionRef.current = true;
@@ -274,26 +319,63 @@ export default function HomeScreen() {
         return;
       }
       // Requested only after foreground is already granted, and separately
-      // from it (Apple's guidance — asking for "Always" up front hurts grant
-      // rates). Denial isn't fatal: foreground tracking below still works
-      // while the app is open, this only unlocks tracking while backgrounded.
-      await Location.requestBackgroundPermissionsAsync();
+      // from it (Android 11+ refuses to ask for both at once). Denial isn't
+      // fatal: foreground tracking still works while the app is open, this
+      // only unlocks tracking while backgrounded.
+      const bg = await Location.requestBackgroundPermissionsAsync();
+      if (bg.status !== "granted" && !bg.canAskAgain) {
+        // Refused before: Android no longer shows its own screen.
+        Alert.alert(
+          "Allow all the time",
+          'To keep sharing your location during a delivery, open Settings → Permissions → Location and choose "Allow all the time".',
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings().catch(() => {}) },
+          ]
+        );
+      }
     } catch (err) {
       console.warn("[home] requestLocationPermissions failed:", err);
     } finally {
       requestingLocationPermissionRef.current = false;
+      void refreshPermissionState();
     }
-  }, []);
+  }, [refreshPermissionState]);
 
-  const handleLocationModalContinue = useCallback(async () => {
+  const handleLocationModalAllow = useCallback(async () => {
     setShowLocationPermissionModal(false);
     // Awaited (previously fire-and-forget) — a remount racing this write
-    // (see the AppState fix above) could otherwise still read the flag as
-    // unset and show the in-app explanation modal again right after the
-    // rider already dismissed it and went through the OS dialog.
-    await AsyncStorage.setItem(LOCATION_PERMISSION_EXPLAINED_KEY, "1").catch(() => {});
+    // (see the AppState fix above) could otherwise still read the answer as
+    // missing and show the disclosure again right after the rider already
+    // went through it and the OS dialog.
+    await AsyncStorage.setItem(LOCATION_DISCLOSURE_KEY, "accepted").catch(() => {});
     requestLocationPermissions();
   }, [requestLocationPermissions]);
+
+  // "Not now" or the back button: remembered, and no permission is requested.
+  // The banner on Home lets the rider open the disclosure again later.
+  const handleLocationModalDecline = useCallback(() => {
+    setShowLocationPermissionModal(false);
+    AsyncStorage.setItem(LOCATION_DISCLOSURE_KEY, "declined").catch(() => {});
+  }, []);
+
+  const handleEnableAlerts = useCallback(async () => {
+    const current = await getOrderAlertPermission();
+    if (current?.granted) {
+      setAlertPermission(current);
+      return;
+    }
+    // Android only shows its dialog while it may still ask; after that the
+    // switch lives in Settings.
+    const result = current?.canAskAgain ? await requestOrderAlertPermission() : null;
+    if (result?.granted) {
+      setAlertPermission(result);
+      alertsWereOffRef.current = false;
+      registerForOrderPushes({ prompt: false }).catch(() => {});
+      return;
+    }
+    Linking.openSettings().catch(() => {});
+  }, []);
 
   // True when the last profile fetch failed. Without it a failed fetch left
   // driverStatus "" — Switch disabled, no "Go Online" button, no message and
@@ -330,22 +412,21 @@ export default function HomeScreen() {
       await fetchProfile(session.token);
       setLoading(false);
 
-      // Shown once, ever — an in-app explanation before the OS's own "Allow
-      // all the time" dialog, instead of jumping straight into that system
-      // prompt with zero context. Riders only ever reach this screen once
-      // verified (resolveAuthenticatedRoute gates it), so this is already
-      // naturally "right after being verified" on their first Home visit.
-      // Runs AFTER first paint: previously the whole Home tab sat on a
-      // spinner until the rider answered the OS permission dialogs.
-      const alreadyExplained = await AsyncStorage.getItem(LOCATION_PERMISSION_EXPLAINED_KEY);
-      if (!alreadyExplained) {
-        setShowLocationPermissionModal(true);
-      } else {
-        // Only (re)prompt when permission isn't already granted — a rider who
-        // denied it was getting the "Permission needed" alert on every mount.
-        const { status } = await Location.getForegroundPermissionsAsync().catch(() => ({ status: "undetermined" as const }));
-        if (status !== "granted") void requestLocationPermissions();
-      }
+      // The background-location disclosure, shown until the rider answers
+      // it — and not at all once "Allow all the time" is already granted.
+      // Riders only ever reach this screen once verified
+      // (resolveAuthenticatedRoute gates it), so this is their first Home
+      // visit. Runs AFTER first paint: previously the whole Home tab sat on
+      // a spinner until the rider answered the OS permission dialogs.
+      //
+      // Nothing here asks the OS for location by itself. It used to
+      // re-request (foreground AND background) on every later visit when
+      // permission was missing, with no disclosure in front of it — which
+      // is what Google Play's policy forbids.
+      const answered = await AsyncStorage.getItem(LOCATION_DISCLOSURE_KEY).catch(() => null);
+      const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+      if (!answered && bg && bg.status !== "granted") setShowLocationPermissionModal(true);
+      void refreshPermissionState();
     })();
 
     return () => {
@@ -353,7 +434,7 @@ export default function HomeScreen() {
       // The offers poll interval is cleared by useRiderOrderPolling's own cleanup.
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [requestLocationPermissions, router, fetchProfile]);
+  }, [refreshPermissionState, router, fetchProfile]);
 
   // Mirrors driverStatus for the realtime handler below, which is set up
   // once per token (not re-subscribed on every status change) and so needs
@@ -735,6 +816,20 @@ export default function HomeScreen() {
     [isOnline, fetchOffers, fetchActiveOrder]
   );
 
+  // A request's push landed while the app is open: show it now.
+  useEffect(() => onOfferPush(() => void fetchOffers()), [fetchOffers]);
+
+  // The order ring (lib/orderRing.ts): repeats from the moment a request is
+  // waiting until the rider accepts or ignores it, or it is taken or expires.
+  // It stops the instant Accept is tapped rather than when the server
+  // answers; if accepting fails and the request is still there, it resumes.
+  const shouldRing = isOnline && !hasActiveOrder && visibleOffers.length > 0 && !accepting;
+  useEffect(() => {
+    if (!shouldRing) return;
+    startOrderRing();
+    return stopOrderRing;
+  }, [shouldRing]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
     await Promise.all([fetchOffers(), fetchActiveOrder(), token ? fetchProfile(token) : Promise.resolve()]);
@@ -851,7 +946,11 @@ export default function HomeScreen() {
 
   return (
     <>
-      <LocationPermissionModal visible={showLocationPermissionModal} onContinue={handleLocationModalContinue} />
+      <LocationPermissionModal
+        visible={showLocationPermissionModal}
+        onAllow={handleLocationModalAllow}
+        onDecline={handleLocationModalDecline}
+      />
       <SafeAreaView style={styles.safe}>
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <View style={styles.header}>
@@ -927,6 +1026,32 @@ export default function HomeScreen() {
               <MaterialCommunityIcons name="wifi-alert" size={18} color={Colors.accent} />
               <Text style={styles.profileErrorText}>
                 Couldn&apos;t load your account status. Tap to retry.
+              </Text>
+            </TouchableOpacity>
+          )}
+          {alertPermission && !alertPermission.granted && (
+            <TouchableOpacity
+              style={styles.profileErrorBanner}
+              onPress={handleEnableAlerts}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+            >
+              <MaterialCommunityIcons name="bell-off-outline" size={18} color={Colors.accent} />
+              <Text style={styles.profileErrorText}>
+                Notifications are off, so you won&apos;t hear order requests when the app is closed. Tap to turn on.
+              </Text>
+            </TouchableOpacity>
+          )}
+          {isOnline && backgroundLocationGranted === false && (
+            <TouchableOpacity
+              style={styles.profileErrorBanner}
+              onPress={() => setShowLocationPermissionModal(true)}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+            >
+              <MaterialCommunityIcons name="map-marker-off-outline" size={18} color={Colors.accent} />
+              <Text style={styles.profileErrorText}>
+                Your location stops updating when the app is closed. Tap to allow it during deliveries.
               </Text>
             </TouchableOpacity>
           )}

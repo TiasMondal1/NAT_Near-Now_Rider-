@@ -5,39 +5,66 @@ import { Colors, Spacing, BorderRadius } from "../constants/theme";
 
 interface Props {
   visible: boolean;
-  onContinue: () => void;
+  /** The rider tapped "Allow location access": the only thing that counts as consent. */
+  onAllow: () => void;
+  /** "Not now" or the back button. No permission may be requested after this. */
+  onDecline: () => void;
 }
 
 /**
- * Shown once, right after a rider is verified, before the OS's own
- * "Allow all the time" location dialog — explains why background access is
- * needed instead of jumping straight into that system prompt with no
- * context. Purely informational: tapping "Continue" just triggers the real
- * permission request; if the rider denies it there, this modal doesn't
- * reappear (see the AsyncStorage flag in home.tsx that gates showing it).
+ * Google Play's prominent disclosure for background location (User Data
+ * policy). Play rejects the app unless ALL of these hold, so keep them when
+ * editing:
+ *  - it is shown inside the app, in normal use, and the system's "Allow all
+ *    the time" request comes directly after it and never without it
+ *    (home.tsx asks for the permission only from onAllow);
+ *  - the wording says the app collects location data, what for, and that it
+ *    happens "even when the app is closed or not in use";
+ *  - consent is an explicit tap. Back, "Not now" or leaving the screen is a
+ *    refusal, not consent;
+ *  - it is not mixed with other disclosures (terms, login, notifications).
  */
-export default function LocationPermissionModal({ visible, onContinue }: Props) {
+export default function LocationPermissionModal({ visible, onAllow, onDecline }: Props) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDecline}>
       <View style={st.overlay}>
         <View style={st.card}>
           <View style={st.iconWrap}>
             <MaterialCommunityIcons name="map-marker-radius" size={40} color={Colors.accent} />
           </View>
-          <Text style={st.title}>Location Access Needed</Text>
+          <Text style={st.title}>Location access</Text>
           <Text style={st.body}>
-            Near & Now needs your location — including while the app is in the background — to
-            share your live position with customers during a delivery and to notify you about
-            nearby order requests while you&apos;re online.
+            Near & Now Delivery Partner collects location data to enable live delivery tracking
+            for customers and matching you with nearby order requests,{" "}
+            <Text style={st.emphasis}>even when the app is closed or not in use.</Text>
           </Text>
           <Text style={st.subBody}>
-            On the next screen, please select{" "}
-            <Text style={st.emphasis}>&quot;Allow all the time&quot;</Text> so tracking keeps working when
-            the app isn&apos;t in the foreground.
+            Your location is collected only while you are online or on a delivery. It stops when
+            you go offline or log out.
           </Text>
-          <TouchableOpacity style={st.btn} onPress={onContinue} activeOpacity={0.8}>
-            <Text style={st.btnText}>Continue</Text>
+          <Text style={st.subBody}>
+            On the next screens, choose &quot;While using the app&quot; and then{" "}
+            <Text style={st.emphasis}>&quot;Allow all the time&quot;</Text>.
+          </Text>
+          <TouchableOpacity
+            style={st.btn}
+            onPress={onAllow}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Allow location access"
+          >
+            <Text style={st.btnText}>Allow location access</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={st.declineBtn}
+            onPress={onDecline}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Not now"
+          >
+            <Text style={st.declineBtnText}>Not now</Text>
+          </TouchableOpacity>
+          <Text style={st.footnote}>You can change this at any time in your phone&apos;s Settings.</Text>
         </View>
       </View>
     </Modal>
@@ -88,7 +115,7 @@ const st = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: "center",
     lineHeight: 18,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.md,
   },
   emphasis: {
     fontWeight: "700",
@@ -105,5 +132,22 @@ const st = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: Colors.accentText,
+  },
+  declineBtn: {
+    width: "100%",
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: Spacing.xs,
+  },
+  declineBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.textSecondary,
+  },
+  footnote: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    textAlign: "center",
+    marginTop: Spacing.xs,
   },
 });

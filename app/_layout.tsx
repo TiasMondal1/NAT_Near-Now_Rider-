@@ -1,12 +1,12 @@
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Platform } from "react-native";
+import { View } from "react-native";
 import { useEffect, useRef, useState } from "react";
 import Constants from "expo-constants";
 import { Colors } from "../constants/theme";
 import { validateConfig } from "../constants/config";
 import { getSession } from "../session";
-import { apiFetch, setSessionExpiredHandler } from "../constants/api";
+import { setSessionExpiredHandler } from "../constants/api";
 import { resolveAuthenticatedRoute } from "../lib/riderVerification";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useProfileChangeOutcomeGate } from "../lib/useProfileChangeOutcomeGate";
@@ -18,7 +18,8 @@ import { UpdateRequiredGate } from "../components/UpdateRequiredGate";
 // to run against — defining it lazily inside a screen would be too late.
 import { stopBackgroundLocationTracking } from "../lib/backgroundLocationTask";
 import { initCrashReporting, setCrashUser } from "../lib/crashReporting";
-import { ensureOrdersChannel } from "../lib/orderAlertChannel";
+import { registerForOrderPushes } from "../lib/pushRegistration";
+import { notifyOfferPush, ORDER_OFFER_PUSH_TYPE } from "../lib/orderRing";
 
 // Before any component mounts so early render errors are captured too.
 initCrashReporting();
@@ -34,9 +35,14 @@ if (!isExpoGo) {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   Notifications = require("expo-notifications");
   Notifications!.setNotificationHandler({
-    handleNotification: async () => ({
+    // Only runs while the app is on screen. An order request is rung there
+    // by the in-app loop (lib/orderRing.ts), which stops the moment the rider
+    // answers; the notification's own 15 s sound cannot be stopped, so it is
+    // muted here and left to play only when the app is not on screen.
+    handleNotification: async (notification) => ({
       shouldShowAlert: true,
-      shouldPlaySound: true,
+      shouldPlaySound:
+        (notification.request.content.data as { type?: string } | null)?.type !== ORDER_OFFER_PUSH_TYPE,
       shouldSetBadge: false,
       shouldShowBanner: true,
       shouldShowList: true,
@@ -101,48 +107,17 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isLoggedIn || isExpoGo || !Notifications) return;
 
-    (async () => {
-      try {
-        const { status: existing } = await Notifications!.getPermissionsAsync();
-        let finalStatus = existing;
-        if (existing !== "granted") {
-          const { status } = await Notifications!.requestPermissionsAsync();
-          finalStatus = status;
-        }
-        if (finalStatus !== "granted") return;
+    // Permission, channel and push token — lib/pushRegistration.ts.
+    registerForOrderPushes({ prompt: true }).catch((err) => {
+      console.warn("Push notification setup failed:", err);
+    });
 
-        if (Platform.OS === "android") {
-          // The "orders_v2" channel with the order chime — defined once in
-          // lib/orderAlertChannel.ts (see there for why the id is _v2).
-          await ensureOrdersChannel(Notifications!);
-        }
-
-        // Explicit projectId, not just implicit auto-resolution — this app
-        // had no EAS project linked at all until 2026-08-25 (see
-        // app.config.js's easProjectId comment), so getExpoPushTokenAsync()
-        // with no args had nothing to resolve and silently failed for every
-        // install. Passing it explicitly here fails loudly/obviously (caught
-        // below) instead of depending on Constants auto-population working
-        // correctly in every build environment.
-        const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
-          ?.projectId;
-        const tokenData = await Notifications!.getExpoPushTokenAsync(
-          projectId ? { projectId } : undefined
-        );
-        const session = await getSession();
-        if (session?.token) {
-          apiFetch(
-            "/delivery-partner/push-token",
-            { method: "PATCH", body: { expo_push_token: tokenData.data } },
-            session.token
-          ).catch(() => {});
-        }
-      } catch (err) {
-        console.warn("Push notification setup failed:", err);
-      }
-    })();
-
-    notificationListener.current = Notifications!.addNotificationReceivedListener(() => {});
+    // Tell Home the moment an order request's push lands, so the request
+    // shows and rings without waiting for Realtime or the next poll.
+    notificationListener.current = Notifications!.addNotificationReceivedListener((notification) => {
+      const type = (notification.request.content.data as { type?: string } | null)?.type;
+      if (type === ORDER_OFFER_PUSH_TYPE) notifyOfferPush();
+    });
 
     responseListener.current = Notifications!.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, string>;

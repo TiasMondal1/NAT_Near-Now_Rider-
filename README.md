@@ -68,6 +68,26 @@ which is intended: an active delivery must stay visible to the customer until
 it is submitted. The task is stopped on go-offline, logout, session expiry,
 and on a cold start with no session.
 
+**Background location disclosure (Google Play).** Play's User Data policy
+requires an in-app disclosure directly before the system's "Allow all the
+time" request. That is `components/LocationPermissionModal.tsx`, and
+`requestBackgroundPermissionsAsync` is called from exactly one place: its
+"Allow location access" button (`handleLocationModalAllow` in Home). Do not
+call it anywhere else, and keep the wording rules listed in that file. "Not
+now" or the back button is a refusal; a banner on Home reopens the disclosure
+later. The Play Console location declaration also needs a short video showing
+the disclosure followed by the system prompt.
+
+**Order alerts.** The order sound is `assets/sounds/order_chime.mp3`. The
+notification channel refers to it by the name `order_chime`, so replacing the
+sound means replacing that file and keeping the name
+(`lib/orderAlertChannel.ts`). `plugins/withKeepNotificationSound.js` stops
+release resource shrinking from emptying it. `lib/orderRing.ts` repeats the
+sound with vibration while a request is waiting on Home, until the rider
+accepts or ignores it or the request goes away. With the app closed or
+swiped away only the push rings, once per push: repeating there needs the
+server to resend the push while the request is unanswered.
+
 **Realtime.** One shared Supabase client (`lib/supabase.ts`). The backend mints
 a narrow Supabase Auth session at login that `lib/riderRealtimeAuth.ts` restores
 so Realtime RLS can evaluate `auth.uid()`. Realtime is best-effort; every screen
@@ -85,8 +105,10 @@ contain them: `DEV_TOOLS_AVAILABLE` (`lib/devTools.ts`, rule in
 `EXPO_PUBLIC_ENV=preview`.
 
 They start hidden. Tap the build number seven times — at the bottom of the
-Profile tab, or at the bottom of the login screen — and a **Developer tools**
-entry appears next to it. The switch at the bottom of the tools screen hides
+Profile tab, or at the bottom of the login screen — then enter the developer
+tools password, and a **Developer tools** entry appears next to it. The
+password is not written in this repository (only its hash, in
+`lib/devToolsRules.ts`); ask the team for it. The switch at the bottom of the tools screen hides
 them again.
 
 | Tool | What it does |
@@ -94,7 +116,7 @@ them again.
 | This build / Login | Version, build number, environment, backend, which keys are present, who is signed in |
 | Functional checks | Runs every check in `lib/diagnostics.ts` and lists pass / look at / failed: connection, backend, each endpoint the tabs read, Realtime, location permission and GPS, the background task, notification permission, channel and push token. Read-only |
 | Demo order | A pretend delivery (`lib/demoDelivery.ts`) that runs through the real screens: offer on Home, accept, two pickups (code `1234`, then a store that confirms by itself), delivery OTP `4321`, payment, Mark Delivered. Scenarios: COD paid by UPI QR, COD in cash (QR expires), prepaid, and an offer another rider takes first. Three wrong codes show the retry countdown; cancelling after accepting shows the "order was cancelled" path. Go online on Home to see the offer |
-| Test notification | A local notification on the order-alert channel with the order chime |
+| Test notification | A local notification on the order-alert channel with the order sound. The demo order rings the repeating order ring on Home |
 | Crash handling | Throws during render to show the crash screen and its Retry; sends a test report when Sentry is on |
 | Saved demo login | Stores the current real login so the login screen can restore it without another OTP SMS |
 

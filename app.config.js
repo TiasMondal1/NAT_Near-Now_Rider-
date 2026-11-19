@@ -3,6 +3,7 @@ const path = require("path");
 const withAbiSplits = require("./plugins/withAbiSplits");
 const withReleaseBuild = require("./plugins/withReleaseBuild");
 const withTabletSupport = require("./plugins/withTabletSupport");
+const withKeepNotificationSound = require("./plugins/withKeepNotificationSound");
 
 // This app's android/ directory is gitignored (managed workflow — EAS Build
 // runs `expo prebuild` fresh from this config every time), so referencing a
@@ -102,6 +103,13 @@ module.exports = () => {
           },
         },
         permissions: ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
+        // expo-audio (the repeating order ring, lib/orderRing.ts) declares
+        // these for recording and lock-screen media controls. The app does
+        // neither, and each one would need its own Play Console declaration.
+        blockedPermissions: [
+          "android.permission.RECORD_AUDIO",
+          "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        ],
       },
       web: {
         favicon: "./assets/images/icon.png",
@@ -123,6 +131,8 @@ module.exports = () => {
         withAbiSplits,
         withReleaseBuild,
         withTabletSupport,
+        // Stops release resource shrinking from emptying the order sound.
+        [withKeepNotificationSound, { sounds: ["order_chime"] }],
         [
           "expo-location",
           {
@@ -146,7 +156,10 @@ module.exports = () => {
             icon: "./assets/notification-icon.png",
             color: "#000000",
             defaultChannel: "orders_v2",
-            sounds: ["./assets/sounds/order_chime.wav"],
+            // Keep the name "order_chime": phones that already have the
+            // orders_v2 channel point at the sound by that name, so a file
+            // with the same name is what makes them play the new sound.
+            sounds: ["./assets/sounds/order_chime.mp3"],
           },
         ],
       ],
